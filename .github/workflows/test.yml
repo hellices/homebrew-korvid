@@ -27,14 +27,24 @@ jobs:
       - name: Set up Homebrew
         uses: Homebrew/actions/setup-homebrew@master
 
+      # brew refuses `audit`/`install` by path; the formula has to be
+      # reached through a tap. Tapping this checkout is what a user's
+      # `brew tap hellices/korvid` does, so it also tests the tap layout.
+      - name: Tap this checkout
+        run: |
+          tap="$(brew --repository)/Library/Taps/hellices/homebrew-korvid"
+          mkdir -p "$(dirname "$tap")"
+          ln -s "$GITHUB_WORKSPACE" "$tap"
+          brew tap-info hellices/korvid
+
       - name: Audit
-        run: brew audit --strict --formula ./Formula/korvid.rb || brew audit --strict "$(pwd)/Formula/korvid.rb"
+        run: brew audit --strict hellices/korvid/korvid
 
       - name: Install from source
-        run: brew install --build-from-source --verbose ./Formula/korvid.rb
+        run: brew install --build-from-source --verbose hellices/korvid/korvid
 
       - name: brew test
-        run: brew test ./Formula/korvid.rb
+        run: brew test hellices/korvid/korvid
 
-      - name: The binary starts without a terminal
+      - name: The installed command reports its version
         run: korvid --version
