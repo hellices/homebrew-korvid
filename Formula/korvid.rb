@@ -13,10 +13,10 @@ class Korvid < Formula
   sha256 "d5f7d2402dd21b2b7b09d6f0e2e36abf9a73e439bd6036feb44c381008079c01"
   license "MIT"
 
+  depends_on "rust" => :build
   depends_on "libyaml"
   depends_on "openssl@3"
   depends_on "python@3.13"
-  depends_on "rust" => :build
 
   resource "aiohappyeyeballs" do
     url "https://files.pythonhosted.org/packages/ce/f4/eec0465c2f67b2664688d0240b3212d5196fd89e741df67ddb81f8d35658/aiohappyeyeballs-2.7.1.tar.gz"
