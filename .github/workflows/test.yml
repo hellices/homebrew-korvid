@@ -1,0 +1,40 @@
+name: Test formula
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # A formula can break without anyone touching it: a yanked sdist or a
+  # withdrawn upstream release is only visible from an actual build.
+  schedule:
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@master
+
+      - name: Audit
+        run: brew audit --strict --formula ./Formula/korvid.rb || brew audit --strict "$(pwd)/Formula/korvid.rb"
+
+      - name: Install from source
+        run: brew install --build-from-source --verbose ./Formula/korvid.rb
+
+      - name: brew test
+        run: brew test ./Formula/korvid.rb
+
+      - name: The binary starts without a terminal
+        run: korvid --version
