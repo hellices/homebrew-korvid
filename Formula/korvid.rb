@@ -14,7 +14,9 @@ class Korvid < Formula
   license "MIT"
 
   depends_on "libyaml"
+  depends_on "openssl@3"
   depends_on "python@3.13"
+  depends_on "rust" => :build
 
   resource "aiohappyeyeballs" do
     url "https://files.pythonhosted.org/packages/ce/f4/eec0465c2f67b2664688d0240b3212d5196fd89e741df67ddb81f8d35658/aiohappyeyeballs-2.7.1.tar.gz"
