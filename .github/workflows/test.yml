@@ -43,6 +43,19 @@ jobs:
       - name: Install from source
         run: brew install --build-from-source --verbose hellices/korvid/korvid
 
+      # brew prints the log *paths* and exits; without this the only
+      # thing a reader gets is "did not build".
+      - name: Show the build log on failure
+        if: failure()
+        run: |
+          for log in ~/Library/Logs/Homebrew/korvid/* \
+                     ~/.cache/Homebrew/Logs/korvid/*; do
+            [ -f "$log" ] || continue
+            echo "::group::$log"
+            tail -60 "$log"
+            echo "::endgroup::"
+          done
+
       - name: brew test
         run: brew test hellices/korvid/korvid
 
