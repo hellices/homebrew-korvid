@@ -11,7 +11,7 @@ class Korvid < Formula
   homepage "https://github.com/hellices/korvid"
   url "https://files.pythonhosted.org/packages/32/8b/a82f92bf39fcfef9cccf01b4fa42cf6216366fa4500284d57f6343afeeef/korvid-0.1.2.tar.gz"
   sha256 "d5f7d2402dd21b2b7b09d6f0e2e36abf9a73e439bd6036feb44c381008079c01"
-  license "MIT"
+  license "Apache-2.0"
 
   depends_on "rust" => :build
   depends_on "libyaml"
@@ -171,11 +171,6 @@ class Korvid < Formula
   resource "python-dateutil" do
     url "https://files.pythonhosted.org/packages/66/c0/0c8b6ad9f17a802ee498c46e004a0eb49bc148f2fd230864601a86dcf6db/python-dateutil-2.9.0.post0.tar.gz"
     sha256 "37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3"
-  end
-
-  resource "pywin32-ctypes" do
-    url "https://files.pythonhosted.org/packages/85/9f/01a1a99704853cb63f253eea009390c88e7131c67e66a0a02099a8c917cb/pywin32-ctypes-0.2.3.tar.gz"
-    sha256 "d162dc04946d704503b2edc4d55f3dba5c1d539ead017afa00142c38b9885755"
   end
 
   resource "pyyaml" do
