@@ -9,8 +9,8 @@ class Korvid < Formula
 
   desc "AI-native Kubernetes TUI"
   homepage "https://github.com/hellices/korvid"
-  url "https://files.pythonhosted.org/packages/32/8b/a82f92bf39fcfef9cccf01b4fa42cf6216366fa4500284d57f6343afeeef/korvid-0.1.2.tar.gz"
-  sha256 "d5f7d2402dd21b2b7b09d6f0e2e36abf9a73e439bd6036feb44c381008079c01"
+  url "https://files.pythonhosted.org/packages/90/cd/e07e6f51c42b39f5cfdabeb375a030e520b40003cb70dcbd9e969711f8d4/korvid-0.2.0.tar.gz"
+  sha256 "6b8c290ede3e246e906e87c76c97be797e9cbb0856916fd7d525bb8845824c06"
   license "Apache-2.0"
 
   depends_on "rust" => :build
@@ -238,6 +238,6 @@ class Korvid < Formula
   end
 
   test do
-    assert_match "0.1.2", shell_output("#{bin}/korvid --version")
+    assert_match "0.2.0", shell_output("#{bin}/korvid --version")
   end
 end
