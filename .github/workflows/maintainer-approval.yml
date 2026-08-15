@@ -1,0 +1,41 @@
+name: Maintainer approval
+
+# The gate that makes "the maintainer decides what lands" true rather than
+# merely written down.
+#
+# A branch ruleset cannot express it: GitHub refuses to let an author approve
+# their own pull request, so a required-approval rule deadlocks a solo
+# maintainer, and the admin bypass that lifts the deadlock lifts every other
+# rule with it - a bypassing merge sails past required checks, unresolved
+# threads and all. An environment reviewer is the one approval GitHub does
+# let you give yourself, so it is the only mechanism that both holds every
+# pull request and stays unblockable by its own maintainer.
+#
+# This job does nothing. Its value is that it cannot start until a human
+# clicks Approve on the `maintainer-approval` environment, and it is a
+# required status check - so until that click, the pull request cannot merge.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: maintainer-approval-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  maintainer-approval:
+    name: maintainer-approval
+    runs-on: ubuntu-latest
+    environment: maintainer-approval
+    timeout-minutes: 5
+    steps:
+      - name: Record the approval
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          echo "Approved by a reviewer of the maintainer-approval environment."
+          echo "PR #${PR_NUMBER} at ${HEAD_SHA}"
