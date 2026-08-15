@@ -34,6 +34,15 @@ on:
 permissions: {}
 
 concurrency:
+  # Cancelling a run that is still waiting for approval is safe, and was
+  # verified rather than assumed: when a second commit arrived on the pull
+  # request that introduced this file, the cancelled run stayed attached to
+  # the superseded SHA and the new head SHA carried exactly one
+  # `maintainer-approval` check, in `waiting`. Required checks are evaluated
+  # against the head SHA, so no `cancelled` result is ever the one that
+  # counts. Leaving old runs alive would be the worse option here: they would
+  # queue up approval requests for diffs that no longer exist, on a gate
+  # whose whole meaning is that the click is the decision.
   group: maintainer-approval-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
