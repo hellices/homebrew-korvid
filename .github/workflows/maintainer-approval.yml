@@ -30,6 +30,13 @@ jobs:
     name: maintainer-approval
     runs-on: ubuntu-latest
     environment: maintainer-approval
+    # Five minutes bounds the job, not the wait. A job held for environment
+    # approval sits in `waiting`, and `timeout-minutes` only starts counting
+    # once it reaches `in_progress` - observed directly: a run of this
+    # workflow sat at `waiting` for over 11 minutes under this same 5-minute
+    # value without being cancelled. The distinction matters more than usual
+    # here: the ruleset has no bypass actors, so a job that timed out while
+    # waiting would block every merge with no way around it.
     timeout-minutes: 5
     steps:
       - name: Record the approval
