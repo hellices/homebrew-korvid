@@ -16,7 +16,19 @@ name: Maintainer approval
 # required status check - so until that click, the pull request cannot merge.
 
 on:
-  pull_request:
+  # `pull_request_target`, not `pull_request`, and this is the whole point.
+  # A `pull_request` workflow runs the version of itself that the pull
+  # request carries, so the branch under review defines its own gate: delete
+  # the `environment:` line below, keep the job name, and the required check
+  # goes green with nobody approving anything. `pull_request_target` runs the
+  # copy on the base branch, which a pull request cannot reach.
+  #
+  # The usual danger of this trigger - a privileged token turned loose on
+  # untrusted code - is absent by construction: `permissions: {}` leaves the
+  # token with nothing, nothing is checked out, and the only step echoes two
+  # values passed through `env` rather than interpolated into the shell.
+  # zizmor: ignore[dangerous-triggers]
+  pull_request_target:
     branches: [main]
 
 permissions: {}
