@@ -191,6 +191,55 @@ class TestTestWorkflow(unittest.TestCase):
         self.assertIn("brew install --verbose hellices/korvid/korvid", text)
         self.assertIn("Pouring korvid--", text)
 
+    def test_bottle_tag_resolver_fails_on_malformed_schema(self):
+        """The inline bottle-tag resolver must not silently skip when the Homebrew
+        JSON schema is malformed or structurally invalid.  It must raise (exit
+        non-zero) for:
+          - missing 'formulae' key (empty or wrong container)
+          - 'formulae' is not a list / is an empty list
+          - formula entry has no 'bottle' key
+          - 'bottle' exists but 'stable' is missing
+          - 'stable' exists but 'files' is missing or wrong type
+        Silent skip is only acceptable when 'formulae[0].bottle.stable.files'
+        is a valid dict and the current runner tag is simply absent from it.
+        """
+        import yaml
+        with open(TEST_WORKFLOW) as f:
+            wf = yaml.safe_load(f)
+        bottle_check_step = None
+        for step in wf["jobs"]["test-bottle"]["steps"]:
+            if step.get("id") == "bottle_check":
+                bottle_check_step = step
+                break
+        self.assertIsNotNone(bottle_check_step, "bottle_check step not found in test-bottle job")
+        run = bottle_check_step["run"]
+
+        # The resolver must NOT use bare .get() chains that swallow structural errors.
+        # Presence of explicit schema-validation patterns is required:
+        # either KeyError/TypeError propagation (no .get on structural keys) or
+        # explicit isinstance/raise guards.
+        permissive_patterns = [
+            # These chained .get() patterns silently return {} on any missing key
+            ".get('bottle', {}).get('stable', {})",
+            '.get("bottle", {}).get("stable", {})',
+            ".get('bottle', {}).get('stable', {}).get('files', {})",
+            '.get("bottle", {}).get("stable", {}).get("files", {})',
+        ]
+        for pattern in permissive_patterns:
+            self.assertNotIn(
+                pattern,
+                run,
+                f"Resolver must not use permissive chained .get() that silently "
+                f"swallows schema errors; found: {pattern!r}",
+            )
+
+        # The resolver must fail explicitly: require either 'sys.exit(1)' or 'raise'
+        # so structural schema violations produce a non-zero exit, not a silent skip.
+        self.assertTrue(
+            "sys.exit(1)" in run or "raise " in run,
+            "Resolver must explicitly fail (sys.exit(1) or raise) on structural schema errors",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

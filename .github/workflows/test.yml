@@ -89,24 +89,51 @@ jobs:
         run: |
           info=$(brew info --json=v2 hellices/korvid/korvid)
           tag=$(echo "$info" | python3 -c "
-          import json, sys, platform
+          import json, sys, platform, subprocess
+
           data = json.load(sys.stdin)
-          formula = data['formulae'][0]
-          bottles = formula.get('bottle', {}).get('stable', {}).get('files', {})
-          # Map arch to expected bottle tag
+
+          # Strict schema validation — any structural deviation is a hard error,
+          # not a silent skip.  Only a valid dict with the expected keys may produce
+          # an empty tag (meaning no bottle for this runner), which is the sole
+          # legitimate reason to set skip=true.
+          if not isinstance(data, dict) or 'formulae' not in data:
+              print('SCHEMA_ERROR: top-level response missing formulae key', file=sys.stderr)
+              sys.exit(1)
+          formulae = data['formulae']
+          if not isinstance(formulae, list) or len(formulae) == 0:
+              print('SCHEMA_ERROR: formulae is not a non-empty list', file=sys.stderr)
+              sys.exit(1)
+          formula = formulae[0]
+          if not isinstance(formula, dict):
+              print('SCHEMA_ERROR: formula entry is not a dict', file=sys.stderr)
+              sys.exit(1)
+          if 'bottle' not in formula:
+              print('SCHEMA_ERROR: formula entry missing bottle key', file=sys.stderr)
+              sys.exit(1)
+          bottle = formula['bottle']
+          if not isinstance(bottle, dict) or 'stable' not in bottle:
+              print('SCHEMA_ERROR: bottle missing stable key', file=sys.stderr)
+              sys.exit(1)
+          stable = bottle['stable']
+          if not isinstance(stable, dict) or 'files' not in stable:
+              print('SCHEMA_ERROR: stable missing files key', file=sys.stderr)
+              sys.exit(1)
+          files = stable['files']
+          if not isinstance(files, dict):
+              print('SCHEMA_ERROR: stable.files is not a dict', file=sys.stderr)
+              sys.exit(1)
+
+          # Schema is structurally valid; check whether this runner has a bottle.
           arch = platform.machine()
-          uname = platform.uname()
-          # Determine which tags to look for
-          candidates = list(bottles.keys())
-          # Pick the first tag that matches the current OS/arch pattern
-          import subprocess
           os_ver = subprocess.check_output(['sw_vers', '-productVersion'], text=True).strip()
           major = os_ver.split('.')[0]
-          # arm64 -> sequoia (macos 15), x86_64 -> sequoia_x86_64
           suffix = '_x86_64' if arch == 'x86_64' else ''
-          target = 'sequoia' + suffix if major == '15' else 'ventura' + suffix if major == '13' else 'sonoma' + suffix if major == '14' else major + suffix
-          print(target if target in candidates else '')
-          " 2>/dev/null || echo "")
+          tag_map = {'15': 'sequoia', '14': 'sonoma', '13': 'ventura'}
+          base = tag_map.get(major, major)
+          target = base + suffix
+          print(target if target in files else '')
+          ")
           if [ -z "$tag" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
