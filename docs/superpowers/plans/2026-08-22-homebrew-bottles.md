@@ -53,7 +53,8 @@ Create fixtures at runtime so no binary bottle is committed. The valid fixture m
             "root_url": ROOT_URL,
             "tags": {
                 tag: {
-                    "local_filename": archive.name,
+                    "filename": remote_name,        # single-dash; served by root_url
+                    "local_filename": local_name,   # double-dash; brew's on-disk name
                     "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
                 }
             },
@@ -96,6 +97,15 @@ def test_rejects_path_traversal_filename(self):
         )
 ```
 
+Also add tests that lock in the local-vs-remote filename split: a build-time
+fixture whose archive is named with the double-dash `local_filename`, a
+downloaded-release fixture whose archive is named with the single-dash remote
+`filename`, rejection of a missing or path-traversing `filename`, rejection
+when `filename` is not the single-dash transform of `local_filename`, rejection
+of an ambiguous set that holds both the local and remote copies of one archive,
+and staging output that keeps each JSON sidecar verbatim while copying each
+archive under its remote `filename`.
+
 - [ ] **Step 2: Run the tests and verify the missing module failure**
 
 Run:
@@ -126,6 +136,10 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _is_plain(name: object) -> bool:
+    return isinstance(name, str) and name not in ("", ".", "..") and Path(name).name == name
 
 
 def validate_artifacts(
@@ -163,18 +177,35 @@ def validate_artifacts(
             raise ValueError(f"{json_path}: duplicate platform tag {tag}")
         seen_tags.add(tag)
 
-        filename = metadata.get("local_filename")
-        if not isinstance(filename, str) or Path(filename).name != filename:
+        remote_filename = metadata.get("filename")
+        local_filename = metadata.get("local_filename")
+        if not _is_plain(remote_filename):
+            raise ValueError(f"{json_path}: filename must be a plain filename")
+        if not _is_plain(local_filename):
             raise ValueError(f"{json_path}: local_filename must be a plain filename")
-        matches = list(root.rglob(filename))
-        if len(matches) != 1:
-            raise ValueError(f"{json_path}: expected one archive named {filename}")
-        archive = matches[0]
+        # A GitHub Release serves the single-dash remote name, so it must equal
+        # the local_filename with its first "--" collapsed to "-".
+        if remote_filename != local_filename.replace("--", "-", 1):
+            raise ValueError(
+                f"{json_path}: filename must be the single-dash form of local_filename"
+            )
+        # Accept exactly one archive, named with either the build-time
+        # local_filename or the published remote filename, but never both.
+        candidates = {
+            match
+            for name in (local_filename, remote_filename)
+            for match in root.rglob(name)
+        }
+        if len(candidates) != 1:
+            raise ValueError(
+                f"{json_path}: expected exactly one archive for {remote_filename}"
+            )
+        archive = next(iter(candidates))
         if archive in seen_archives:
             raise ValueError(f"{json_path}: archive reused by multiple tags")
         seen_archives.add(archive)
         if _sha256(archive) != metadata.get("sha256"):
-            raise ValueError(f"{json_path}: archive checksum does not match {filename}")
+            raise ValueError(f"{json_path}: archive checksum does not match {remote_filename}")
 
     if seen_tags != expected_tags:
         raise ValueError(
@@ -184,9 +215,12 @@ def validate_artifacts(
 ```
 
 Add a `main()` that parses the documented arguments, rejects an empty tag set,
-calls `validate_artifacts`, catches only `OSError`, `ValueError`, and
-`json.JSONDecodeError`, reports them through `parser.error`, and prints each
-validated JSON path on its own line.
+calls `validate_artifacts`, and, when `--stage-dir` is given, calls
+`stage_release_assets` to build a clean upload directory that holds each JSON
+sidecar verbatim and each archive copied under its single-dash remote
+`filename`. It catches only `OSError`, `ValueError`, and `json.JSONDecodeError`,
+reports them through `parser.error`, and prints each validated JSON path on its
+own line.
 
 - [ ] **Step 4: Run focused tests**
 
@@ -225,7 +259,7 @@ git commit -m "test: validate Homebrew bottle artifacts" \
 
 **Interfaces:**
 - Consumes: `validate_bottle_artifacts(...)` from Task 1 and source formula on `main`.
-- Produces: release tag `korvid-VERSION`, assets `korvid--VERSION.*.bottle.tar.gz` and matching JSON, branch `bottles-korvid-VERSION`, and an unmerged pull request.
+- Produces: release tag `korvid-VERSION`, assets `korvid-VERSION.*.bottle.tar.gz` (staged under the single-dash remote filename) and matching JSON, branch `bottles-korvid-VERSION`, and an unmerged pull request.
 
 - [ ] **Step 1: Write failing workflow contract tests**
 
@@ -312,12 +346,16 @@ permissions:
 ```
 
 Download both artifacts with pinned `actions/download-artifact`. For an absent
-or draft release, validate local artifacts before any `gh release create`,
-replace only draft assets, upload the complete set, and publish the draft. For
-an already-published release, download its `.bottle.tar.gz` and `.bottle.json`
-assets to an empty directory and validate that set instead of replacing it.
+or draft release, validate the local build artifacts and stage them into a
+clean upload directory (`--stage-dir`) that renames each archive from its
+double-dash `local_filename` to the single-dash remote `filename`, before any
+`gh release create`. Replace only draft assets, upload the complete staged set,
+verify remote completeness against every staged asset basename, and publish the
+draft. For an already-published release, download its `.bottle.tar.gz` and
+`.bottle.json` assets to an empty directory and validate that set in place —
+without staging or renaming — instead of replacing it.
 
-Use:
+Use, for the absent or draft path:
 
 ```bash
 python3 scripts/validate_bottle_artifacts.py \
@@ -325,8 +363,14 @@ python3 scripts/validate_bottle_artifacts.py \
   --version "$VERSION" \
   --root-url "$ROOT_URL" \
   --tag arm64_sequoia \
-  --tag sequoia
+  --tag sequoia \
+  --stage-dir "$staged_dir"
 ```
+
+Then upload from `"$staged_dir"` and compare the release's remote asset names
+against the staged basenames. For the published-recovery path, run the same
+command without `--stage-dir` so the immutable single-dash archives are
+validated but never rewritten.
 
 Fail on a release state other than absent, draft, or published. Do not use a
 catch-all success fallback.
@@ -410,7 +454,8 @@ def test_formula_tests_verify_bottle_without_pypi(self):
     self.assertIn("macos-15-intel", text)
     self.assertIn("files.pythonhosted.org", text)
     self.assertIn("brew install --verbose hellices/korvid/korvid", text)
-    self.assertIn("Pouring korvid--", text)
+    self.assertIn("Pouring korvid", text)
+    self.assertNotIn("Pouring korvid--", text)
 ```
 
 - [ ] **Step 2: Run the focused tests and verify the new assertion fails**
@@ -421,7 +466,9 @@ Run:
 python3 -m unittest tests/test_workflows.py -v
 ```
 
-Expected: the source fallback test passes; the bottle-consumption test fails.
+Expected: the source fallback test passes; the bottle-consumption assertion
+fails until the workflow greps for the single-dash `Pouring korvid` basename
+that Homebrew prints for a release-served bottle.
 
 - [ ] **Step 3: Make the test workflow dispatchable**
 
@@ -449,7 +496,9 @@ When present:
 brew install --verbose hellices/korvid/korvid 2>&1 | tee bottle-install.log
 ```
 
-5. Require `bottle-install.log` to contain `Pouring korvid--`.
+5. Require `bottle-install.log` to contain the single-dash `Pouring korvid`
+   basename Homebrew prints for a release-served bottle (never the double-dash
+   `Pouring korvid--` local name).
 6. Run `brew test hellices/korvid/korvid` and `korvid --version`.
 
 - [ ] **Step 5: Run workflow tests and syntax checks**
@@ -488,15 +537,23 @@ that Homebrew still downloads its own dependency bottles.
 
 - [ ] **Step 2: Document prefetch on a matching connected Mac**
 
-Add commands that let Homebrew select filenames from formula metadata:
+Add commands that let Homebrew select filenames from formula metadata. Because
+`brew fetch --force-bottle` still succeeds when no matching bottle is published,
+gate the fetch behind an explicit `brew info --json=v2` preflight that parses
+`.formulae[0].bottle.stable.files`, applies strict schema checks, and requires
+exactly `arm64_sequoia` on Apple Silicon macOS 15 or `sequoia` on Intel macOS
+15. That preflight — not `brew fetch` — is the failure gate; it must exit
+non-zero on an unsupported architecture, an unsupported macOS version, or an
+absent expected tag before any fetch runs:
 
 ```bash
 brew tap hellices/korvid
 tap="$(brew --repository)/Library/Taps/hellices/homebrew-korvid"
 cp -R "$tap" "$PWD/homebrew-korvid"
 mkdir -p "$PWD/korvid-homebrew-cache"
+brew info --json=v2 hellices/korvid/korvid | python3 preflight.py   # fails if no matching bottle
 HOMEBREW_CACHE="$PWD/korvid-homebrew-cache" \
-  brew fetch --force --deps hellices/korvid/korvid
+  brew fetch --force --deps --force-bottle hellices/korvid/korvid
 ```
 
 State that the staging Mac must match the target architecture and macOS bottle
@@ -525,11 +582,13 @@ mirror may serve the same versioned release paths instead of removable media.
 Run:
 
 ```bash
-rg -n 'files.pythonhosted.org|brew fetch --force --deps|HOMEBREW_NO_AUTO_UPDATE|HOMEBREW_CACHE|homebrew-korvid' README.md
+rg -n 'files.pythonhosted.org|brew info --json=v2|brew fetch --force --deps|HOMEBREW_NO_AUTO_UPDATE|HOMEBREW_CACHE|homebrew-korvid' README.md
 git diff --check
 ```
 
-Expected: every required concept and command is present; no whitespace errors.
+Expected: every required concept and command is present — including the
+explicit `brew info --json=v2` preflight that gates the fetch — and no
+whitespace errors.
 
 - [ ] **Step 5: Commit**
 

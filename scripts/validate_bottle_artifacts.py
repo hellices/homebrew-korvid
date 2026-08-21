@@ -4,6 +4,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -15,18 +17,41 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def validate_artifacts(
+def _is_plain_filename(name: object) -> bool:
+    return isinstance(name, str) and name != "" and Path(name).name == name
+
+
+def _expected_remote_filename(local_filename: str) -> str:
+    """Homebrew writes the on-disk bottle as ``<name>--<version>...``
+    (``Bottle::Filename#to_s``) but publishes it under ``<name>-<version>...``
+    (``Bottle::Filename#url_encode``); the two differ only in the ``--`` that
+    separates the formula name from the version. A GitHub Release ``root_url``
+    serves the single-dash name, so that is what a client requests."""
+    return local_filename.replace("--", "-", 1)
+
+
+@dataclass(frozen=True)
+class BottleArtifact:
+    json_path: Path
+    tag: str
+    archive: Path
+    filename: str  # remote single-dash name served from root_url
+    local_filename: str  # build-time double-dash name on disk
+
+
+def _collect_artifacts(
     root: Path,
     version: str,
     root_url: str,
     expected_tags: set[str],
-) -> list[Path]:
+) -> list[BottleArtifact]:
     json_paths = sorted(root.rglob("*.bottle.json"))
     if not json_paths:
         raise ValueError(f"no bottle JSON files found under {root}")
 
     seen_tags: set[str] = set()
     seen_archives: set[Path] = set()
+    artifacts: list[BottleArtifact] = []
     for json_path in json_paths:
         payload = json.loads(json_path.read_text(encoding="utf-8"))
         if len(payload) != 1:
@@ -50,24 +75,97 @@ def validate_artifacts(
             raise ValueError(f"{json_path}: duplicate platform tag {tag}")
         seen_tags.add(tag)
 
-        filename = metadata.get("local_filename")
-        if not isinstance(filename, str) or Path(filename).name != filename:
+        local_filename = metadata.get("local_filename")
+        if not _is_plain_filename(local_filename):
             raise ValueError(f"{json_path}: local_filename must be a plain filename")
-        matches = list(root.rglob(filename))
-        if len(matches) != 1:
-            raise ValueError(f"{json_path}: expected one archive named {filename}")
-        archive = matches[0]
+
+        filename = metadata.get("filename")
+        if not _is_plain_filename(filename):
+            raise ValueError(f"{json_path}: filename must be a plain filename")
+
+        expected = _expected_remote_filename(local_filename)
+        if filename != expected:
+            raise ValueError(
+                f"{json_path}: filename {filename!r} does not match the single-dash "
+                f"form of local_filename {local_filename!r} (expected {expected!r})"
+            )
+
+        # Exactly one archive must be present, named by *either* the build-time
+        # local_filename or the published remote filename -- never both, which
+        # would make the checksum target ambiguous.
+        present = sorted(
+            {p for name in {local_filename, filename} for p in root.rglob(name)}
+        )
+        if not present:
+            raise ValueError(
+                f"{json_path}: no archive found named {filename} or {local_filename}"
+            )
+        if len(present) > 1:
+            raise ValueError(
+                f"{json_path}: ambiguous archives for tag {tag}: "
+                f"{[p.name for p in present]}"
+            )
+        archive = present[0]
         if archive in seen_archives:
             raise ValueError(f"{json_path}: archive reused by multiple tags")
         seen_archives.add(archive)
         if _sha256(archive) != metadata.get("sha256"):
-            raise ValueError(f"{json_path}: archive checksum does not match {filename}")
+            raise ValueError(
+                f"{json_path}: archive checksum does not match {archive.name}"
+            )
+
+        artifacts.append(
+            BottleArtifact(
+                json_path=json_path,
+                tag=tag,
+                archive=archive,
+                filename=filename,
+                local_filename=local_filename,
+            )
+        )
 
     if seen_tags != expected_tags:
         raise ValueError(
             f"platform tags were {sorted(seen_tags)}, expected {sorted(expected_tags)}"
         )
-    return json_paths
+    return artifacts
+
+
+def validate_artifacts(
+    root: Path,
+    version: str,
+    root_url: str,
+    expected_tags: set[str],
+) -> list[Path]:
+    artifacts = _collect_artifacts(root, version, root_url, expected_tags)
+    return sorted(artifact.json_path for artifact in artifacts)
+
+
+def stage_release_assets(
+    root: Path,
+    version: str,
+    root_url: str,
+    expected_tags: set[str],
+    stage_dir: Path,
+) -> list[Path]:
+    """Validate ``root`` then build a clean upload directory at ``stage_dir``
+    containing each JSON metadata sidecar and each archive copied under its
+    remote ``filename`` (the single-dash name Homebrew requests from the
+    release ``root_url``). Returns the staged paths."""
+    artifacts = _collect_artifacts(root, version, root_url, expected_tags)
+
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    for stale in (*stage_dir.glob("*.bottle.tar.gz"), *stage_dir.glob("*.bottle.json")):
+        stale.unlink()
+
+    staged: list[Path] = []
+    for artifact in artifacts:
+        json_dest = stage_dir / artifact.json_path.name
+        shutil.copyfile(artifact.json_path, json_dest)
+        archive_dest = stage_dir / artifact.filename
+        shutil.copyfile(artifact.archive, archive_dest)
+        staged.extend((json_dest, archive_dest))
+    return sorted(staged)
 
 
 def main() -> int:
@@ -78,16 +176,37 @@ def main() -> int:
     parser.add_argument("--version", required=True)
     parser.add_argument("--root-url", required=True)
     parser.add_argument("--tag", action="append", default=[])
+    parser.add_argument(
+        "--stage-dir",
+        type=Path,
+        default=None,
+        help=(
+            "After validation, copy each JSON sidecar and each archive -- "
+            "renamed to its remote single-dash filename -- into this directory "
+            "for release upload."
+        ),
+    )
     args = parser.parse_args()
 
     if not args.tag:
         parser.error("--tag must be provided at least once")
 
     try:
-        for json_path in validate_artifacts(
-            args.artifacts, args.version, args.root_url, set(args.tag)
-        ):
-            print(json_path)
+        if args.stage_dir is not None:
+            staged = stage_release_assets(
+                args.artifacts,
+                args.version,
+                args.root_url,
+                set(args.tag),
+                args.stage_dir,
+            )
+            for path in staged:
+                print(path)
+        else:
+            for json_path in validate_artifacts(
+                args.artifacts, args.version, args.root_url, set(args.tag)
+            ):
+                print(json_path)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         parser.error(str(exc))
     return 0

@@ -36,11 +36,51 @@ provided those two domains are reachable.
 ### Prefetch on a matching connected Mac
 
 Run the following on a Mac that matches the **architecture and macOS version**
-of the target host (the bottle tag must match):
+of the target host (the bottle tag must match).
+The preflight below is the failure gate for staging.
+Fetching with `--force-bottle` does not fail when no bottle exists, so an
+explicit `brew info --json=v2` schema and tag check runs first and stops
+staging on an unsupported host before anything is fetched.
 
 ```bash
 brew tap hellices/korvid
 tap="$(brew --repository)/Library/Taps/hellices/homebrew-korvid"
+
+# Preflight (the failure gate): stop on this connected Mac unless a bottle for
+# its exact architecture and macOS 15 is published. Only arm64_sequoia (Apple
+# Silicon) and sequoia (Intel) on macOS 15 are supported.
+brew info --json=v2 hellices/korvid/korvid | python3 - <<'PY'
+import json, platform, subprocess, sys
+
+data = json.load(sys.stdin)
+if not isinstance(data, dict) or not isinstance(data.get("formulae"), list) or not data["formulae"]:
+    sys.exit("SCHEMA_ERROR: brew info payload missing formulae")
+formula = data["formulae"][0]
+if not isinstance(formula, dict):
+    sys.exit("SCHEMA_ERROR: formula entry is not an object")
+bottle = formula.get("bottle")
+if not isinstance(bottle, dict) or "stable" not in bottle:
+    sys.exit("SCHEMA_ERROR: formula has no stable bottle block")
+stable = bottle["stable"]
+if not isinstance(stable, dict) or not isinstance(stable.get("files"), dict):
+    sys.exit("SCHEMA_ERROR: stable bottle has no files map")
+files = stable["files"]
+
+release = subprocess.check_output(["sw_vers", "-productVersion"], text=True).strip()
+if release.split(".")[0] != "15":
+    sys.exit(f"unsupported macOS {release}: only macOS 15 bottles are published")
+arch = platform.machine()
+if arch == "arm64":
+    tag = "arm64_sequoia"
+elif arch == "x86_64":
+    tag = "sequoia"
+else:
+    sys.exit(f"unsupported architecture {arch!r}")
+if tag not in files:
+    sys.exit(f"no {tag} bottle published for korvid; cannot stage on this Mac")
+print(f"preflight ok: {tag} bottle is published")
+PY
+
 cp -R "$tap" "$PWD/homebrew-korvid"
 mkdir -p "$PWD/korvid-homebrew-cache"
 HOMEBREW_CACHE="$PWD/korvid-homebrew-cache" \
@@ -49,9 +89,9 @@ HOMEBREW_CACHE="$PWD/korvid-homebrew-cache" \
 
 This copies the tap checkout so that formula metadata is transferred verbatim,
 and populates `korvid-homebrew-cache/` with the Korvid bottle and every
-Homebrew dependency bottle. `--force-bottle` forces Homebrew to download the
-Korvid bottle instead of silently falling back to a source build, so staging
-fails immediately if no bottle matches this Mac. Transfer both
+Homebrew dependency bottle. `--force-bottle` makes Homebrew download the Korvid
+bottle rather than silently building it from source; the preflight above, not
+that flag, is what stops staging when no matching bottle exists. Transfer both
 `homebrew-korvid/` and `korvid-homebrew-cache/` to the restricted host.
 
 ### Disconnected installation
@@ -76,16 +116,19 @@ the host. An internal mirror that serves the same versioned GitHub Release
 paths may substitute for removable media.
 
 **Caveats:** bottle availability is controlled by the Homebrew infrastructure
-that builds against tagged releases; verify that a bottle for your exact
-macOS version and architecture exists before staging. Because of
-`--force-bottle`, the `brew fetch` step above **fails on the connected
-machine** when no Korvid bottle matches its macOS version and architecture, so
-an unsupported or not-yet-published target is caught during staging rather than
-on the disconnected host. A normal online `brew install hellices/korvid/korvid`
-behaves differently: without `--force-bottle`, Homebrew silently falls back to
-building Korvid from source when no matching bottle exists, and that source
-build reaches PyPI (`files.pythonhosted.org`) for the Python dependencies,
-which a restricted network may block.
+that builds against tagged releases; the preflight above verifies that a bottle
+for your exact macOS version and architecture exists before staging. That
+explicit preflight, not `brew fetch`, is what fails on the connected machine
+when no `arm64_sequoia` (Apple Silicon) or `sequoia` (Intel) bottle is
+published for macOS 15, so an unsupported or not-yet-published target is caught
+during staging rather than on the disconnected host.
+Note that `brew fetch --force-bottle` alone does not fail on a missing
+bottle, which is why the explicit preflight runs first. A normal online
+`brew install hellices/korvid/korvid` behaves differently again: without
+`--force-bottle`, Homebrew silently falls back to building Korvid from source
+when no matching bottle exists, and that source build reaches PyPI
+(`files.pythonhosted.org`) for the Python dependencies, which a restricted
+network may block.
 
 ## Maintenance
 

@@ -318,6 +318,102 @@ class TestBottlesWorkflow(unittest.TestCase):
         )
 
     # ------------------------------------------------------------------ #
+    # Remote-filename fix: stage single-dash assets before upload          #
+    # ------------------------------------------------------------------ #
+
+    def _publish_validate_step_run(self):
+        """Return the run script of the publish step that both uploads assets
+        and flips the draft to published."""
+        import yaml
+
+        with open(BOTTLES_WORKFLOW) as f:
+            wf = yaml.safe_load(f)
+        step = next(
+            (
+                s
+                for s in wf["jobs"]["publish"]["steps"]
+                if "gh release upload" in (s.get("run") or "")
+                and "--draft=false" in (s.get("run") or "")
+            ),
+            None,
+        )
+        self.assertIsNotNone(
+            step, "no publish step both uploads assets and flips the draft to published"
+        )
+        return step["run"]
+
+    def _staged_dir_variable(self, run):
+        """Extract the shell variable name passed to the validator --stage-dir."""
+        import re
+
+        match = re.search(r"--stage-dir\s+\"?\$\{?(\w+)\}?\"?", run)
+        self.assertIsNotNone(
+            match,
+            "publish must stage remote-named assets with "
+            "validate_bottle_artifacts.py --stage-dir <dir>",
+        )
+        return match.group(1)
+
+    def test_publish_stages_remote_named_assets_before_upload(self):
+        """GitHub Releases serve the single-dash remote `filename`, not the
+        double-dash `local_filename` Homebrew writes to disk. The publish step
+        must therefore build a staged upload directory (validator --stage-dir)
+        and upload *from that staged directory*, not from the raw build
+        artifacts whose archives carry the double-dash name and would 404."""
+        import re
+
+        run = self._publish_validate_step_run()
+
+        # Staging must be produced by the validator, before any upload.
+        self.assertIn(
+            "--stage-dir",
+            run,
+            "publish must stage remote-named assets via "
+            "validate_bottle_artifacts.py --stage-dir",
+        )
+        self.assertLess(
+            run.index("--stage-dir"),
+            run.index("gh release upload"),
+            "staging must precede upload",
+        )
+
+        staged_var = self._staged_dir_variable(run)
+
+        # The read-loop that performs the upload must be fed by a `find` over
+        # the staged directory ...
+        self.assertRegex(
+            run,
+            r"find\s+\"\$" + re.escape(staged_var) + r"\"[^\n]*-print0",
+            f"the upload loop's find must walk the staged dir (${staged_var})",
+        )
+        # ... and must not walk the raw build-artifacts dir, whose archives use
+        # the double-dash local_filename that 404s on the release root_url.
+        self.assertNotRegex(
+            run,
+            r"find\s+\"\$artifact_dir\"[^\n]*-print0",
+            "upload must read the staged remote-named dir, not the raw "
+            "build-artifacts dir",
+        )
+
+    def test_completeness_check_compares_staged_directory(self):
+        """The pre-publish completeness check must compare the remote asset
+        names against every *staged* asset basename (the names actually
+        uploaded), not the raw build-artifact basenames."""
+        run = self._publish_validate_step_run()
+        staged_var = self._staged_dir_variable(run)
+
+        upload_idx = run.index("gh release upload")
+        publish_idx = run.index("--draft=false")
+        after_upload = run[upload_idx:publish_idx]
+        check_block = after_upload[after_upload.index("gh release view") :]
+        self.assertIn(
+            staged_var,
+            check_block,
+            f"completeness check must compare remote assets against the staged "
+            f"dir (${staged_var}), got: {check_block!r}",
+        )
+
+    # ------------------------------------------------------------------ #
     # New contract tests for root-cause fix (task-5)                      #
     # ------------------------------------------------------------------ #
 
@@ -412,7 +508,12 @@ class TestTestWorkflow(unittest.TestCase):
         self.assertIn("macos-15-intel", text)
         self.assertIn("files.pythonhosted.org", text)
         self.assertIn("brew install --verbose hellices/korvid/korvid", text)
-        self.assertIn("Pouring korvid--", text)
+        # Once bottles are published under their single-dash remote filename,
+        # Homebrew reports a single-dash basename ("Pouring korvid-<version>...").
+        # The pour assertion must match a stable prefix and must NOT assume the
+        # double-dash local_filename, which would never appear.
+        self.assertIn("Pouring korvid", text)
+        self.assertNotIn("Pouring korvid--", text)
 
     def test_bottle_tag_resolver_fails_on_malformed_schema(self):
         """The inline bottle-tag resolver must not silently skip when the Homebrew

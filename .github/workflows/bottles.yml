@@ -208,14 +208,22 @@ jobs:
 
           if [ "$RELEASE_STATE" = "absent" ] || [ "$RELEASE_STATE" = "draft" ]; then
             artifact_dir="artifacts"
+            staged_dir="staged"
 
-            # Validate local build artifacts before any upload
+            # Validate the local build artifacts and stage a clean upload set.
+            # brew writes each archive under Homebrew's double-dash
+            # local_filename, but a GitHub Release root_url serves the
+            # single-dash remote filename; --stage-dir copies the JSON sidecars
+            # verbatim and renames each archive to that remote filename so a
+            # later `brew install` does not 404. Validation runs first inside
+            # the same call, so a bad artifact set never reaches the release.
             python3 scripts/validate_bottle_artifacts.py \
               --artifacts "$artifact_dir" \
               --version "$VERSION" \
               --root-url "$ROOT_URL" \
               --tag arm64_sequoia \
-              --tag sequoia
+              --tag sequoia \
+              --stage-dir "$staged_dir"
 
             if [ "$RELEASE_STATE" = "absent" ]; then
               gh release create "$RELEASE_TAG" \
@@ -235,41 +243,48 @@ jobs:
           "
             fi
 
-            # Upload every bottle artifact as a standalone loop-body statement.
+            # Upload every staged asset as a standalone loop-body statement.
             # Under `set -euo pipefail` a single failed `gh release upload`
             # aborts the step, unlike `find -exec`, which discards child exit
             # codes and would let us publish a draft with missing assets.
             while IFS= read -r -d '' artifact; do
               gh release upload "$RELEASE_TAG" "$artifact"
-            done < <(find "$artifact_dir" -type f \( -name "*.bottle.tar.gz" -o -name "*.bottle.json" \) -print0)
+            done < <(find "$staged_dir" -type f \( -name "*.bottle.tar.gz" -o -name "*.bottle.json" \) -print0)
 
-            # Re-query the release and confirm every locally validated artifact
-            # (both the .bottle.tar.gz archives and their .bottle.json sidecars)
-            # actually landed as a remote asset before flipping the draft to
-            # published. A silently dropped upload would otherwise publish a
-            # release whose formula PR points at 404 download URLs.
+            # Re-query the release and confirm every staged asset (the
+            # single-dash .bottle.tar.gz archives and their .bottle.json
+            # sidecars) actually landed as a remote asset before flipping the
+            # draft to published. A silently dropped upload would otherwise
+            # publish a release whose formula PR points at 404 download URLs.
             gh release view "$RELEASE_TAG" --json assets \
-              | ARTIFACT_DIR="$artifact_dir" python3 -c "
+              | STAGED_DIR="$staged_dir" python3 -c "
           import json, os, sys
           from pathlib import Path
           remote = {a['name'] for a in json.load(sys.stdin)['assets']}
           local = set()
-          for p in Path(os.environ['ARTIFACT_DIR']).rglob('*'):
+          for p in Path(os.environ['STAGED_DIR']).rglob('*'):
               if p.is_file() and (p.name.endswith('.bottle.tar.gz') or p.name.endswith('.bottle.json')):
                   local.add(p.name)
           if not local:
-              sys.exit('no local bottle artifacts found to verify against release assets')
+              sys.exit('no staged bottle assets found to verify against release assets')
           missing = sorted(local - remote)
           if missing:
               sys.exit('release ' + os.environ['RELEASE_TAG'] + ' is missing uploaded assets: ' + ', '.join(missing))
-          print('confirmed ' + str(len(local)) + ' local artifacts present as release assets: ' + ', '.join(sorted(local)))
+          print('confirmed ' + str(len(local)) + ' staged assets present as release assets: ' + ', '.join(sorted(local)))
           "
 
             # Publish the release only after confirming completeness
             gh release edit "$RELEASE_TAG" --draft=false
 
+            # The staged directory holds the validated JSON sidecars the
+            # formula merge step consumes below.
+            validated_dir="$staged_dir"
+
           elif [ "$RELEASE_STATE" = "published" ]; then
-            # For a published release, download and validate the immutable published assets
+            # For a published release, download and validate the immutable
+            # published assets. They already carry the single-dash remote
+            # filename, so validate them in place without renaming, staging, or
+            # re-uploading; published assets must never be replaced.
             artifact_dir="published_artifacts"
             mkdir -p "$artifact_dir"
             gh release download "$RELEASE_TAG" \
@@ -285,13 +300,14 @@ jobs:
               --tag sequoia
 
             echo "Release already published and validated; skipping asset upload."
+            validated_dir="$artifact_dir"
           else
             echo "Unexpected release state: $RELEASE_STATE" >&2
             exit 1
           fi
 
           # Carry the validated artifact directory into subsequent steps
-          echo "VALIDATED_DIR=${artifact_dir}" >> "$GITHUB_ENV"
+          echo "VALIDATED_DIR=${validated_dir}" >> "$GITHUB_ENV"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

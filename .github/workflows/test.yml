@@ -169,7 +169,7 @@ jobs:
 
       - name: Verify bottle was poured
         if: steps.bottle_check.outputs.skip == 'false'
-        run: grep "Pouring korvid--" bottle-install.log
+        run: grep "Pouring korvid" bottle-install.log
 
       - name: brew test
         if: steps.bottle_check.outputs.skip == 'false'

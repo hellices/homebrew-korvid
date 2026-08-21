@@ -73,9 +73,15 @@ partial build. It:
 
 1. Downloads both bottle archives and their JSON metadata.
 2. Validates that the metadata describes one formula version, both expected
-   platform tags, the configured root URL, and the downloaded archive hashes.
-3. Creates a draft GitHub Release and uploads every validated file.
-4. Publishes the release only after all uploads succeed.
+   platform tags, the configured root URL, a safe single-dash remote `filename`
+   matching each double-dash `local_filename`, and the archive hashes.
+3. Stages a clean upload set that copies each JSON sidecar and renames each
+   archive from Homebrew's build-time `local_filename` (`korvid--<version>...`)
+   to the single-dash remote `filename` (`korvid-<version>...`) a GitHub
+   Release actually serves, then creates a draft GitHub Release and uploads
+   every staged file.
+4. Re-queries the release, confirms every staged asset landed, and publishes
+   the release only after that completeness check succeeds.
 5. Uses Homebrew's JSON merge command to write the `bottle do` block into the
    checked-out formula.
 6. Commits the formula-only change to a version-specific bottle branch using
@@ -106,12 +112,16 @@ exist until after its output is merged.
 
 The versioned bottle release has three states:
 
-- **Absent:** create it as a draft, upload all files, validate them, and publish.
-- **Draft:** replace draft assets with the current complete validated set, then
-  publish. Draft assets are not user-facing.
-- **Published:** do not replace assets. Download the archived JSON and bottles,
-  validate their version, platform tags, and checksums, and use them to recover
-  a missing branch or pull request.
+- **Absent:** create it as a draft, validate and stage the build artifacts
+  under their remote single-dash filenames, upload the staged set, confirm
+  every staged asset landed, and publish.
+- **Draft:** replace draft assets with the current complete staged set, confirm
+  completeness, then publish. Draft assets are not user-facing.
+- **Published:** do not replace assets. Download the immutable published
+  archives (already under their single-dash remote filename) and JSON, validate
+  their version, platform tags, remote filenames, and checksums without
+  modifying or restaging them, and use them to recover a missing branch or
+  pull request.
 
 Commands use strict shell error handling. Invalid version extraction, missing
 matrix output, unexpected bottle tags, checksum mismatches, release conflicts,
@@ -162,7 +172,11 @@ The README will distinguish restricted and fully air-gapped operation:
   Homebrew dependency bottles; the Korvid bottle alone is insufficient.
 
 The documented commands will derive the matching bottle from Homebrew metadata
-rather than asking users to guess an architecture-specific filename.
+rather than asking users to guess an architecture-specific filename. Because
+`brew fetch --force-bottle` still succeeds when no matching bottle exists, the
+staging steps run an explicit `brew info --json=v2` schema-and-tag preflight
+first; that preflight, not `brew fetch`, is the failure gate that stops an
+operator on an unsupported architecture or macOS version.
 
 ## Out of Scope
 
