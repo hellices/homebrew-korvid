@@ -112,7 +112,14 @@ jobs:
               print('SCHEMA_ERROR: formula entry missing bottle key', file=sys.stderr)
               sys.exit(1)
           bottle = formula['bottle']
-          if not isinstance(bottle, dict) or 'stable' not in bottle:
+          if not isinstance(bottle, dict):
+              print('SCHEMA_ERROR: bottle is not a dict', file=sys.stderr)
+              sys.exit(1)
+          # bottle == {} is a legitimate source-only formula response; skip cleanly.
+          if not bottle:
+              print('')
+              sys.exit(0)
+          if 'stable' not in bottle:
               print('SCHEMA_ERROR: bottle missing stable key', file=sys.stderr)
               sys.exit(1)
           stable = bottle['stable']
@@ -125,13 +132,13 @@ jobs:
               sys.exit(1)
 
           # Schema is structurally valid; check whether this runner has a bottle.
+          # Homebrew tags: arm64 -> arm64_<base>, x86_64 -> <base>
           arch = platform.machine()
           os_ver = subprocess.check_output(['sw_vers', '-productVersion'], text=True).strip()
           major = os_ver.split('.')[0]
-          suffix = '_x86_64' if arch == 'x86_64' else ''
           tag_map = {'15': 'sequoia', '14': 'sonoma', '13': 'ventura'}
           base = tag_map.get(major, major)
-          target = base + suffix
+          target = 'arm64_' + base if arch == 'arm64' else base
           print(target if target in files else '')
           ")
           if [ -z "$tag" ]; then

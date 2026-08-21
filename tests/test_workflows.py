@@ -241,5 +241,60 @@ class TestTestWorkflow(unittest.TestCase):
         )
 
 
+    def test_bottle_tag_resolver_skips_on_empty_bottle(self):
+        """bottle == {} is a legitimate source-only formula response.
+        The resolver must set skip=true (not exit 1) in that case."""
+        import yaml
+        with open(TEST_WORKFLOW) as f:
+            wf = yaml.safe_load(f)
+        bottle_check_step = None
+        for step in wf["jobs"]["test-bottle"]["steps"]:
+            if step.get("id") == "bottle_check":
+                bottle_check_step = step
+                break
+        self.assertIsNotNone(bottle_check_step, "bottle_check step not found")
+        run = bottle_check_step["run"]
+        # Must explicitly handle bottle == {} as a valid skip, not a schema error.
+        # The phrase "bottle == {}" or equivalent empty-dict check must appear.
+        self.assertTrue(
+            "bottle == {}" in run or "not bottle" in run or "len(bottle) == 0" in run
+            or "bottle is None or not bottle" in run,
+            "Resolver must treat bottle == {} as a valid skip (source-only formula), "
+            "not a schema error. Add an explicit empty-bottle check before the stable key guard.",
+        )
+
+    def test_bottle_tag_resolver_maps_arch_correctly(self):
+        """arm64 -> arm64_${base}, x86_64 -> ${base} (NOT base_x86_64)."""
+        import yaml
+        with open(TEST_WORKFLOW) as f:
+            wf = yaml.safe_load(f)
+        bottle_check_step = None
+        for step in wf["jobs"]["test-bottle"]["steps"]:
+            if step.get("id") == "bottle_check":
+                bottle_check_step = step
+                break
+        self.assertIsNotNone(bottle_check_step, "bottle_check step not found")
+        run = bottle_check_step["run"]
+        # arm64 tag is arm64_${base}, x86_64 tag is bare ${base}
+        self.assertIn(
+            "arm64_",
+            run,
+            "Resolver must produce arm64_<base> for arm64 architecture",
+        )
+        # Must NOT produce base_x86_64 (wrong order)
+        self.assertNotIn(
+            "base + suffix",
+            run,
+            "Resolver must not append suffix to base (produces sequoia_x86_64); "
+            "use prefix for arm64 instead",
+        )
+        # The correct pattern is 'arm64_' + base for arm64
+        self.assertTrue(
+            "'arm64_' + base" in run or '"arm64_" + base' in run
+            or "f'arm64_{base}'" in run or 'f"arm64_{base}"' in run,
+            "Resolver must compute arm64 tag as 'arm64_' + base (e.g. arm64_sequoia)",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
