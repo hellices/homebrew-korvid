@@ -1,11 +1,54 @@
-"""Contract tests for .github/workflows/bottles.yml and test.yml."""
+"""Contract tests for .github/workflows/bottles.yml and test.yml.
+
+Standard library only: workflow YAML is parsed through the runner-provided
+Ruby/Psych toolchain (see ``load_workflow``), never PyYAML, so this suite runs
+under ``python3 -S`` with no site-packages.
+"""
 from __future__ import annotations
 
+import ast
+import json
+import subprocess
 import unittest
+from functools import lru_cache
 from pathlib import Path
 
 BOTTLES_WORKFLOW = Path(__file__).parent.parent / ".github" / "workflows" / "bottles.yml"
 TEST_WORKFLOW = Path(__file__).parent.parent / ".github" / "workflows" / "test.yml"
+
+# Ruby one-liner: read a YAML file and print it as JSON on stdout. Psych and JSON
+# are part of Ruby's standard library, and this repository already requires Ruby
+# for `ruby -c Formula/korvid.rb` and Psych-based workflow validation, so parsing
+# YAML this way introduces no third-party (PyYAML) dependency.
+_RUBY_YAML_TO_JSON = (
+    'require "psych"; require "json"; '
+    "print JSON.generate(Psych.safe_load(File.read(ARGV[0])))"
+)
+
+
+@lru_cache(maxsize=None)
+def _workflow_json(path: str) -> str:
+    """Return the JSON serialization of a YAML file, via runner-provided Ruby.
+
+    Cached so Ruby is spawned at most once per workflow file across the suite.
+    """
+    completed = subprocess.run(
+        ["ruby", "-e", _RUBY_YAML_TO_JSON, path],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return completed.stdout
+
+
+def load_workflow(path) -> dict:
+    """Parse a workflow YAML file into Python objects without PyYAML.
+
+    Returns a fresh object on every call (the cache holds the JSON text, not the
+    decoded structure), so callers may read the result freely without any
+    cross-test coupling.
+    """
+    return json.loads(_workflow_json(str(path)))
 
 
 class TestBottlesWorkflow(unittest.TestCase):
@@ -44,12 +87,56 @@ class TestBottlesWorkflow(unittest.TestCase):
         # The unsafe pattern must not be present
         self.assertNotIn("'$RELEASE_TAG'", text)
 
+    def test_checkout_persist_credentials_scoped_by_job(self):
+        """actions/checkout persists the job's GITHUB_TOKEN in the workspace git
+        config by default. Only `publish` needs it (it pushes the bottle
+        branch), so `prepare` and `build` -- which only read the checkout and
+        never push -- must check out with `persist-credentials: false` so no
+        usable token is left behind in the workspace for the rest of the job.
+        `publish` must NOT disable it, or its `git push` would lose auth."""
+        wf = load_workflow(BOTTLES_WORKFLOW)
+        jobs = wf["jobs"]
+
+        def checkout_step(job_name):
+            steps = jobs[job_name]["steps"]
+            step = next(
+                (s for s in steps if "actions/checkout" in (s.get("uses") or "")),
+                None,
+            )
+            self.assertIsNotNone(
+                step, f"{job_name} job has no actions/checkout step"
+            )
+            return step
+
+        for job_name in ("prepare", "build"):
+            with_block = checkout_step(job_name).get("with") or {}
+            self.assertIn(
+                "persist-credentials",
+                with_block,
+                f"{job_name} checkout must set persist-credentials: false "
+                "(it never pushes; leave no usable token in the workspace git "
+                "config)",
+            )
+            self.assertIs(
+                with_block["persist-credentials"],
+                False,
+                f"{job_name} checkout must set persist-credentials: false, got "
+                f"{with_block['persist-credentials']!r}",
+            )
+
+        # publish pushes the bottle branch, so it must retain credentials.
+        publish_with = checkout_step("publish").get("with") or {}
+        self.assertIsNot(
+            publish_with.get("persist-credentials", True),
+            False,
+            "publish checkout must retain credentials (it pushes the bottle "
+            "branch); do not set persist-credentials: false there",
+        )
+
     def test_publish_job_has_concurrency_group(self):
         """The publish job must declare its own concurrency group keyed by version
         so two workflow runs for the same version cannot race in the publish step."""
-        import yaml  # available on GitHub runners and dev machines
-        with open(BOTTLES_WORKFLOW) as f:
-            wf = yaml.safe_load(f)
+        wf = load_workflow(BOTTLES_WORKFLOW)
         publish_job = wf.get("jobs", {}).get("publish", {})
         self.assertIn(
             "concurrency",
@@ -68,9 +155,7 @@ class TestBottlesWorkflow(unittest.TestCase):
         """In the published-release recovery path, brew bottle --merge must use the
         directory that was downloaded and validated from the release, not the local
         build artifacts directory. The merge step must not hardcode 'artifacts'."""
-        import yaml
-        with open(BOTTLES_WORKFLOW) as f:
-            wf = yaml.safe_load(f)
+        wf = load_workflow(BOTTLES_WORKFLOW)
         publish_job = wf["jobs"]["publish"]
         steps = publish_job["steps"]
         # Find the merge step
@@ -93,9 +178,7 @@ class TestBottlesWorkflow(unittest.TestCase):
         """The bottle branch must be checked out BEFORE brew bottle --merge writes
         Formula/korvid.rb; otherwise the merge lands on main and the push may
         overwrite unrelated remote changes."""
-        import yaml
-        with open(BOTTLES_WORKFLOW) as f:
-            wf = yaml.safe_load(f)
+        wf = load_workflow(BOTTLES_WORKFLOW)
         publish_job = wf["jobs"]["publish"]
         steps = publish_job["steps"]
         step_names = [s.get("name", "") for s in steps]
@@ -135,9 +218,7 @@ class TestBottlesWorkflow(unittest.TestCase):
     def test_build_concurrency_includes_matrix_tag(self):
         """Build job concurrency group must include the matrix tag so both
         architecture legs can run in parallel (not serially blocked by each other)."""
-        import yaml
-        with open(BOTTLES_WORKFLOW) as f:
-            wf = yaml.safe_load(f)
+        wf = load_workflow(BOTTLES_WORKFLOW)
         build_job = wf["jobs"]["build"]
         concurrency = build_job.get("concurrency", {})
         group = concurrency.get("group", "")
@@ -160,9 +241,7 @@ class TestBottlesWorkflow(unittest.TestCase):
     def test_prepare_calls_brew_info_at_most_once(self):
         """brew info --json=v2 must be called at most once in the prepare job
         (capture output and reuse instead of three separate calls)."""
-        import yaml
-        with open(BOTTLES_WORKFLOW) as f:
-            wf = yaml.safe_load(f)
+        wf = load_workflow(BOTTLES_WORKFLOW)
         prepare_steps = wf["jobs"]["prepare"]["steps"]
         brew_info_calls = sum(
             (s.get("run") or "").count("brew info --json=v2")
@@ -179,9 +258,7 @@ class TestBottlesWorkflow(unittest.TestCase):
         """The prepare job must invoke Homebrew/actions/setup-homebrew before
         calling any brew command so that Homebrew is always correctly
         initialised, matching what every other brew-using job does."""
-        import yaml
-        with open(BOTTLES_WORKFLOW) as f:
-            wf = yaml.safe_load(f)
+        wf = load_workflow(BOTTLES_WORKFLOW)
         prepare_steps = wf["jobs"]["prepare"]["steps"]
         setup_uses = [
             s.get("uses", "") for s in prepare_steps
@@ -214,9 +291,7 @@ class TestBottlesWorkflow(unittest.TestCase):
         not be silently skipped."""
         text = BOTTLES_WORKFLOW.read_text()
         # The prepare job must call gh release to inspect assets
-        import yaml
-        with open(BOTTLES_WORKFLOW) as f:
-            wf = yaml.safe_load(f)
+        wf = load_workflow(BOTTLES_WORKFLOW)
         prepare_steps = wf["jobs"]["prepare"]["steps"]
         prepare_text = "".join(s.get("run", "") for s in prepare_steps)
         self.assertIn(
@@ -268,9 +343,7 @@ class TestBottlesWorkflow(unittest.TestCase):
         sidecars -- not merely the two tarballs. Otherwise a dropped upload can
         be published with missing assets.
         """
-        import yaml
-        with open(BOTTLES_WORKFLOW) as f:
-            wf = yaml.safe_load(f)
+        wf = load_workflow(BOTTLES_WORKFLOW)
         publish_steps = wf["jobs"]["publish"]["steps"]
         step = next(
             (s for s in publish_steps
@@ -324,10 +397,7 @@ class TestBottlesWorkflow(unittest.TestCase):
     def _publish_validate_step_run(self):
         """Return the run script of the publish step that both uploads assets
         and flips the draft to published."""
-        import yaml
-
-        with open(BOTTLES_WORKFLOW) as f:
-            wf = yaml.safe_load(f)
+        wf = load_workflow(BOTTLES_WORKFLOW)
         step = next(
             (
                 s
@@ -423,10 +493,7 @@ class TestBottlesWorkflow(unittest.TestCase):
         """Every job in bottles.yml that contains a brew command must have a
         setup-homebrew step that appears before the tap-symlink step and before
         the first brew command step."""
-        import yaml
-
-        with open(BOTTLES_WORKFLOW) as f:
-            wf = yaml.safe_load(f)
+        wf = load_workflow(BOTTLES_WORKFLOW)
 
         for job_name, job in wf.get("jobs", {}).items():
             steps = job.get("steps", [])
@@ -473,10 +540,7 @@ class TestBottlesWorkflow(unittest.TestCase):
     def test_all_setup_homebrew_refs_in_bottles_yml_use_pinned_sha(self):
         """Every Homebrew/actions/setup-homebrew reference in bottles.yml must
         use the exact pinned 40-character SHA, not a mutable ref like @master."""
-        import yaml
-
-        with open(BOTTLES_WORKFLOW) as f:
-            wf = yaml.safe_load(f)
+        wf = load_workflow(BOTTLES_WORKFLOW)
 
         for job_name, job in wf.get("jobs", {}).items():
             for step in job.get("steps", []):
@@ -527,9 +591,7 @@ class TestTestWorkflow(unittest.TestCase):
         Silent skip is only acceptable when 'formulae[0].bottle.stable.files'
         is a valid dict and the current runner tag is simply absent from it.
         """
-        import yaml
-        with open(TEST_WORKFLOW) as f:
-            wf = yaml.safe_load(f)
+        wf = load_workflow(TEST_WORKFLOW)
         bottle_check_step = None
         for step in wf["jobs"]["test-bottle"]["steps"]:
             if step.get("id") == "bottle_check":
@@ -568,9 +630,7 @@ class TestTestWorkflow(unittest.TestCase):
     def test_bottle_tag_resolver_skips_on_empty_bottle(self):
         """bottle == {} is a legitimate source-only formula response.
         The resolver must set skip=true (not exit 1) in that case."""
-        import yaml
-        with open(TEST_WORKFLOW) as f:
-            wf = yaml.safe_load(f)
+        wf = load_workflow(TEST_WORKFLOW)
         bottle_check_step = None
         for step in wf["jobs"]["test-bottle"]["steps"]:
             if step.get("id") == "bottle_check":
@@ -589,9 +649,7 @@ class TestTestWorkflow(unittest.TestCase):
 
     def test_bottle_tag_resolver_maps_arch_correctly(self):
         """arm64 -> arm64_${base}, x86_64 -> ${base} (NOT base_x86_64)."""
-        import yaml
-        with open(TEST_WORKFLOW) as f:
-            wf = yaml.safe_load(f)
+        wf = load_workflow(TEST_WORKFLOW)
         bottle_check_step = None
         for step in wf["jobs"]["test-bottle"]["steps"]:
             if step.get("id") == "bottle_check":
@@ -618,6 +676,45 @@ class TestTestWorkflow(unittest.TestCase):
             or "f'arm64_{base}'" in run or 'f"arm64_{base}"' in run,
             "Resolver must compute arm64 tag as 'arm64_' + base (e.g. arm64_sequoia)",
         )
+
+
+class TestSuiteHygiene(unittest.TestCase):
+    """Guard the no-PyYAML contract so the suite keeps running under
+    ``python3 -S`` (no site-packages)."""
+
+    def test_workflow_tests_do_not_import_pyyaml(self):
+        """These tests must parse workflow YAML through the runner-provided
+        Ruby/Psych helper, never PyYAML. Reintroducing ``import yaml`` (an
+        undeclared, site-packages-only dependency) breaks ``python3 -S`` runs;
+        catch it here with a clear message instead of a bare ImportError."""
+        tree = ast.parse(Path(__file__).read_text())
+        offenders = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                offenders += [
+                    alias.name
+                    for alias in node.names
+                    if alias.name.split(".")[0] == "yaml"
+                ]
+            elif isinstance(node, ast.ImportFrom):
+                if (node.module or "").split(".")[0] == "yaml":
+                    offenders.append(node.module)
+        self.assertEqual(
+            offenders,
+            [],
+            "test_workflows.py must not import PyYAML; parse workflow YAML via "
+            f"the runner-provided Ruby/Psych helper instead. Found: {offenders}",
+        )
+
+    def test_load_workflow_helper_matches_direct_ruby_parse(self):
+        """The load_workflow helper must faithfully reproduce the workflow
+        structure (round-tripped through Ruby/Psych -> JSON), so tests that rely
+        on it observe the same jobs a direct parse would."""
+        for path in (BOTTLES_WORKFLOW, TEST_WORKFLOW):
+            wf = load_workflow(path)
+            self.assertIsInstance(wf, dict)
+            self.assertIn("jobs", wf)
+            self.assertTrue(wf["jobs"], f"{path} parsed with no jobs")
 
 
 if __name__ == "__main__":

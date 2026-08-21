@@ -43,16 +43,40 @@ explicit `brew info --json=v2` schema and tag check runs first and stops
 staging on an unsupported host before anything is fetched.
 
 ```bash
+set -euo pipefail
+
 brew tap hellices/korvid
 tap="$(brew --repository)/Library/Taps/hellices/homebrew-korvid"
 
 # Preflight (the failure gate): stop on this connected Mac unless a bottle for
-# its exact architecture and macOS 15 is published. Only arm64_sequoia (Apple
-# Silicon) and sequoia (Intel) on macOS 15 are supported.
-brew info --json=v2 hellices/korvid/korvid | python3 - <<'PY'
-import json, platform, subprocess, sys
+# its exact architecture and macOS 15 is published. Reject an unsupported macOS
+# version or CPU up front; only arm64_sequoia (Apple Silicon) and sequoia
+# (Intel) on macOS 15 are supported.
+macos_version="$(sw_vers -productVersion)"
+if [ "${macos_version%%.*}" != "15" ]; then
+  echo "unsupported macOS ${macos_version}: only macOS 15 bottles are published" >&2
+  exit 1
+fi
+case "$(uname -m)" in
+  arm64)  expected_tag="arm64_sequoia" ;;
+  x86_64) expected_tag="sequoia" ;;
+  *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+esac
 
-data = json.load(sys.stdin)
+# Capture the metadata once, then hand the JSON payload and the resolved tag to
+# the validator through environment variables. Piping into `python3 - <<'PY'`
+# would not work: the heredoc becomes the program on stdin, so a
+# `json.load(sys.stdin)` would only ever read the script itself, never the JSON.
+brew_info_json="$(brew info --json=v2 hellices/korvid/korvid)"
+KORVID_BREW_INFO_JSON="$brew_info_json" KORVID_EXPECTED_TAG="$expected_tag" \
+  python3 - <<'PY'
+import json, os, sys
+
+expected_tag = os.environ["KORVID_EXPECTED_TAG"]
+try:
+    data = json.loads(os.environ["KORVID_BREW_INFO_JSON"])
+except json.JSONDecodeError as exc:
+    sys.exit(f"SCHEMA_ERROR: brew info payload is not valid JSON: {exc}")
 if not isinstance(data, dict) or not isinstance(data.get("formulae"), list) or not data["formulae"]:
     sys.exit("SCHEMA_ERROR: brew info payload missing formulae")
 formula = data["formulae"][0]
@@ -65,22 +89,12 @@ stable = bottle["stable"]
 if not isinstance(stable, dict) or not isinstance(stable.get("files"), dict):
     sys.exit("SCHEMA_ERROR: stable bottle has no files map")
 files = stable["files"]
-
-release = subprocess.check_output(["sw_vers", "-productVersion"], text=True).strip()
-if release.split(".")[0] != "15":
-    sys.exit(f"unsupported macOS {release}: only macOS 15 bottles are published")
-arch = platform.machine()
-if arch == "arm64":
-    tag = "arm64_sequoia"
-elif arch == "x86_64":
-    tag = "sequoia"
-else:
-    sys.exit(f"unsupported architecture {arch!r}")
-if tag not in files:
-    sys.exit(f"no {tag} bottle published for korvid; cannot stage on this Mac")
-print(f"preflight ok: {tag} bottle is published")
+if expected_tag not in files:
+    sys.exit(f"no {expected_tag} bottle published for korvid; cannot stage on this Mac")
+print(f"preflight ok: {expected_tag} bottle is published")
 PY
 
+# Staging (copy + fetch) runs only after the preflight above exits 0.
 cp -R "$tap" "$PWD/homebrew-korvid"
 mkdir -p "$PWD/korvid-homebrew-cache"
 HOMEBREW_CACHE="$PWD/korvid-homebrew-cache" \
