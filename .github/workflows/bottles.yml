@@ -1,0 +1,302 @@
+name: Build and Publish Bottles
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - Formula/korvid.rb
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.info.outputs.version }}
+      release_tag: ${{ steps.info.outputs.release_tag }}
+      root_url: ${{ steps.info.outputs.root_url }}
+      should_build: ${{ steps.info.outputs.should_build }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Homebrew tap
+        run: |
+          set -euo pipefail
+          mkdir -p "$(brew --repository)/Library/Taps/hellices"
+          ln -sfn "$GITHUB_WORKSPACE" "$(brew --repository)/Library/Taps/hellices/homebrew-korvid"
+
+      - name: Gather version and release info
+        id: info
+        run: |
+          set -euo pipefail
+          VERSION=$(brew info --json=v2 hellices/korvid/korvid | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          print(data['formulae'][0]['versions']['stable'])
+          ")
+          RELEASE_TAG="korvid-${VERSION}"
+          ROOT_URL="https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "root_url=${ROOT_URL}" >> "$GITHUB_OUTPUT"
+
+          # Check whether both bottle tags are already published in the formula
+          HAS_ARM=$(brew info --json=v2 hellices/korvid/korvid | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          files = data['formulae'][0].get('bottle', {}).get('stable', {}).get('files', {})
+          print('1' if 'arm64_sequoia' in files else '0')
+          ")
+          HAS_INTEL=$(brew info --json=v2 hellices/korvid/korvid | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          files = data['formulae'][0].get('bottle', {}).get('stable', {}).get('files', {})
+          print('1' if 'sequoia' in files else '0')
+          ")
+          if [ "$HAS_ARM" = "1" ] && [ "$HAS_INTEL" = "1" ]; then
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    concurrency:
+      group: bottles-${{ needs.prepare.outputs.release_tag }}
+      cancel-in-progress: false
+    strategy:
+      matrix:
+        include:
+          - os: macos-15
+            tag: arm64_sequoia
+          - os: macos-15-intel
+            tag: sequoia
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Homebrew tap
+        run: |
+          set -euo pipefail
+          mkdir -p "$(brew --repository)/Library/Taps/hellices"
+          ln -sfn "$GITHUB_WORKSPACE" "$(brew --repository)/Library/Taps/hellices/homebrew-korvid"
+
+      - name: Audit formula
+        run: |
+          set -euo pipefail
+          brew audit --strict hellices/korvid/korvid
+
+      - name: Install (build-bottle mode)
+        run: |
+          set -euo pipefail
+          brew install --build-bottle --verbose hellices/korvid/korvid
+
+      - name: Test formula
+        run: |
+          set -euo pipefail
+          brew test hellices/korvid/korvid
+          korvid --version
+
+      - name: Build bottle
+        env:
+          ROOT_URL: ${{ needs.prepare.outputs.root_url }}
+        run: |
+          set -euo pipefail
+          brew bottle --json --root-url="$ROOT_URL" hellices/korvid/korvid
+
+      - name: Verify bottle tag matches matrix
+        env:
+          MATRIX_TAG: ${{ matrix.tag }}
+        run: |
+          set -euo pipefail
+          json_file=$(ls *.bottle.json)
+          python3 - <<'EOF'
+          import json, os, sys
+          tag = os.environ["MATRIX_TAG"]
+          json_file = next(f for f in os.listdir(".") if f.endswith(".bottle.json"))
+          data = json.loads(open(json_file).read())
+          formula = list(data.values())[0]
+          files = formula["bottle"]["tags"]
+          if tag not in files:
+              sys.exit(f"Expected bottle tag '{tag}' not found in {list(files.keys())}")
+          print(f"Bottle tag '{tag}' confirmed.")
+          EOF
+
+      - name: Upload bottle artifacts
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b  # v4.5.0
+        with:
+          name: bottle-${{ matrix.tag }}
+          path: |
+            *.bottle.tar.gz
+            *.bottle.json
+          if-no-files-found: error
+
+  publish:
+    needs:
+      - prepare
+      - build
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+      ROOT_URL: ${{ needs.prepare.outputs.root_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up Homebrew tap
+        run: |
+          set -euo pipefail
+          mkdir -p "$(brew --repository)/Library/Taps/hellices"
+          ln -sfn "$GITHUB_WORKSPACE" "$(brew --repository)/Library/Taps/hellices/homebrew-korvid"
+
+      - name: Download bottle artifacts
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e  # v4.2.1
+        with:
+          pattern: bottle-*
+          path: artifacts/
+
+      - name: Determine release state and validate/publish
+        run: |
+          set -euo pipefail
+
+          # Determine whether a release exists and its state
+          RELEASE_STATE=$(gh release view "$RELEASE_TAG" --json isDraft,tagName 2>/dev/null \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); print('draft' if d['isDraft'] else 'published')" \
+            || echo "absent")
+
+          echo "Release state: $RELEASE_STATE"
+
+          artifact_dir="artifacts"
+
+          if [ "$RELEASE_STATE" = "absent" ] || [ "$RELEASE_STATE" = "draft" ]; then
+            # Validate local build artifacts before any upload
+            python3 scripts/validate_bottle_artifacts.py \
+              --artifacts "$artifact_dir" \
+              --version "$VERSION" \
+              --root-url "$ROOT_URL" \
+              --tag arm64_sequoia \
+              --tag sequoia
+
+            if [ "$RELEASE_STATE" = "absent" ]; then
+              gh release create "$RELEASE_TAG" \
+                --title "korvid $VERSION" \
+                --notes "Homebrew bottles for korvid $VERSION" \
+                --draft
+            else
+              # Replace any draft assets (delete existing bottle files first)
+              gh release view "$RELEASE_TAG" --json assets \
+                | python3 -c "
+          import json, sys, subprocess
+          assets = json.load(sys.stdin)['assets']
+          for a in assets:
+              if '.bottle.' in a['name']:
+                  subprocess.run(['gh', 'release', 'delete-asset', '$RELEASE_TAG', a['name'], '--yes'], check=True)
+          "
+            fi
+
+            # Upload all bottle artifacts
+            find "$artifact_dir" -type f \( -name "*.bottle.tar.gz" -o -name "*.bottle.json" \) \
+              -exec gh release upload "$RELEASE_TAG" {} \;
+
+            # Publish the release
+            gh release edit "$RELEASE_TAG" --draft=false
+
+          elif [ "$RELEASE_STATE" = "published" ]; then
+            # For a published release, validate only the already-published assets
+            published_dir="published_artifacts"
+            mkdir -p "$published_dir"
+            gh release download "$RELEASE_TAG" \
+              --pattern "*.bottle.tar.gz" \
+              --pattern "*.bottle.json" \
+              --dir "$published_dir"
+
+            python3 scripts/validate_bottle_artifacts.py \
+              --artifacts "$published_dir" \
+              --version "$VERSION" \
+              --root-url "$ROOT_URL" \
+              --tag arm64_sequoia \
+              --tag sequoia
+
+            echo "Release already published and validated; skipping asset upload."
+          else
+            echo "Unexpected release state: $RELEASE_STATE" >&2
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update formula with bottle metadata
+        run: |
+          set -euo pipefail
+
+          # Collect validated JSON paths (null-delimited for safety)
+          mapfile -d '' json_paths < <(find artifacts -name "*.bottle.json" -print0)
+
+          brew bottle --merge --write --no-commit --no-all-checks "${json_paths[@]}"
+          ruby -c Formula/korvid.rb
+
+      - name: Commit and push bottle branch
+        run: |
+          set -euo pipefail
+          BRANCH="bottles-korvid-${VERSION}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Fetch an existing remote branch before pushing
+          git fetch origin "$BRANCH" || true
+          if git show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
+            git checkout -b "$BRANCH" "origin/$BRANCH"
+          else
+            git checkout -b "$BRANCH"
+          fi
+
+          git add Formula/korvid.rb
+          git commit -m "bottles: add bottles for korvid $VERSION
+
+          Co-authored-by: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+
+          git push --force-with-lease origin "$BRANCH"
+
+      - name: Open pull request if none exists
+        run: |
+          set -euo pipefail
+          BRANCH="bottles-korvid-${VERSION}"
+
+          EXISTING_PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number' || true)
+          if [ -z "$EXISTING_PR" ]; then
+            gh pr create \
+              --head "$BRANCH" \
+              --base main \
+              --title "bottles: add Homebrew bottles for korvid $VERSION" \
+              --body "Automated bottle PR for korvid $VERSION.
+
+          - Built on \`macos-15\` (arm64_sequoia) and \`macos-15-intel\` (sequoia)
+          - Validated with \`scripts/validate_bottle_artifacts.py\`
+          - Release: $ROOT_URL
+
+          **Do not merge this PR without human review.**"
+          else
+            echo "PR #${EXISTING_PR} already exists for branch ${BRANCH}; skipping creation."
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger test workflow on bottle branch
+        run: |
+          set -euo pipefail
+          BRANCH="bottles-korvid-${VERSION}"
+          gh workflow run test.yml --ref "$BRANCH"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
