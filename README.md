@@ -23,6 +23,62 @@ want it, install from PyPI instead:
 uv tool install 'korvid[mcp]'
 ```
 
+## Restricted-network and air-gapped installation
+
+### Normal restricted-network behavior
+
+On macOS 15 (Apple Silicon and Intel), `brew install hellices/korvid/korvid`
+downloads a pre-built Korvid bottle from GitHub Releases and does **not**
+contact PyPI or `files.pythonhosted.org`. Homebrew's own dependency bottles
+are also fetched from GitHub; no other external network paths are required
+provided those two domains are reachable.
+
+### Prefetch on a matching connected Mac
+
+Run the following on a Mac that matches the **architecture and macOS version**
+of the target host (the bottle tag must match):
+
+```bash
+brew tap hellices/korvid
+tap="$(brew --repository)/Library/Taps/hellices/homebrew-korvid"
+cp -R "$tap" "$PWD/homebrew-korvid"
+mkdir -p "$PWD/korvid-homebrew-cache"
+HOMEBREW_CACHE="$PWD/korvid-homebrew-cache" \
+  brew fetch --force --deps hellices/korvid/korvid
+```
+
+This copies the tap checkout so that formula metadata is transferred verbatim,
+and populates `korvid-homebrew-cache/` with the Korvid bottle and every
+Homebrew dependency bottle. Transfer both `homebrew-korvid/` and
+`korvid-homebrew-cache/` to the restricted host.
+
+### Disconnected installation
+
+On the target host, place the tap checkout where Homebrew expects it and
+point the installer at the pre-populated cache:
+
+```bash
+tap="$(brew --repository)/Library/Taps/hellices/homebrew-korvid"
+mkdir -p "$(dirname "$tap")"
+cp -R /path/from-transfer/homebrew-korvid "$tap"
+
+HOMEBREW_NO_AUTO_UPDATE=1 \
+HOMEBREW_CACHE=/path/from-transfer/korvid-homebrew-cache \
+  brew install hellices/korvid/korvid
+```
+
+`HOMEBREW_NO_AUTO_UPDATE=1` prevents Homebrew from attempting a network fetch
+before the install begins. Homebrew itself, current formula metadata for all
+Homebrew dependencies, and every dependency bottle must already be present on
+the host. An internal mirror that serves the same versioned GitHub Release
+paths may substitute for removable media.
+
+**Caveats:** bottle availability is controlled by the Homebrew infrastructure
+that builds against tagged releases; verify that a bottle for your exact
+macOS version and architecture exists before staging. The `brew fetch` step
+above will fail on the connected machine if no matching bottle has been
+published yet.
+
 ## Maintenance
 
 `Formula/korvid.rb` is **generated**, not written. Every resource comes
