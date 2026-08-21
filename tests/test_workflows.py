@@ -227,6 +227,88 @@ class TestBottlesWorkflow(unittest.TestCase):
             "workflow_dispatch recovery with deleted assets must re-trigger builds",
         )
 
+    # ------------------------------------------------------------------ #
+    # New contract tests for root-cause fix (task-5)                      #
+    # ------------------------------------------------------------------ #
+
+    PINNED_SHA = "a657b8b0cd35d0f65cce41fce9b24cf054b49869"
+
+    def test_every_brew_job_has_setup_homebrew_before_tap_symlink(self):
+        """Every job in bottles.yml that contains a brew command must have a
+        setup-homebrew step that appears before the tap-symlink step and before
+        the first brew command step."""
+        import yaml
+
+        with open(BOTTLES_WORKFLOW) as f:
+            wf = yaml.safe_load(f)
+
+        for job_name, job in wf.get("jobs", {}).items():
+            steps = job.get("steps", [])
+            step_runs = [s.get("run", "") for s in steps]
+
+            # Does this job contain any brew command?
+            if not any("brew " in r for r in step_runs):
+                continue
+
+            # Must have a setup-homebrew step
+            setup_indices = [
+                i for i, s in enumerate(steps)
+                if "setup-homebrew" in s.get("uses", "")
+            ]
+            self.assertTrue(
+                setup_indices,
+                f"Job '{job_name}' runs brew commands but is missing a "
+                "Homebrew/actions/setup-homebrew step",
+            )
+            setup_idx = setup_indices[0]
+
+            # setup-homebrew must be before the tap-symlink step
+            tap_idx = next(
+                (i for i, r in enumerate(step_runs) if "brew --repository" in r),
+                None,
+            )
+            if tap_idx is not None:
+                self.assertLess(
+                    setup_idx, tap_idx,
+                    f"Job '{job_name}': setup-homebrew (idx {setup_idx}) must come "
+                    f"before the tap-symlink step (idx {tap_idx})",
+                )
+
+            # setup-homebrew must be before the first brew command step
+            first_brew_idx = next(
+                i for i, r in enumerate(step_runs) if "brew " in r
+            )
+            self.assertLess(
+                setup_idx, first_brew_idx,
+                f"Job '{job_name}': setup-homebrew (idx {setup_idx}) must come "
+                f"before the first brew command step (idx {first_brew_idx})",
+            )
+
+    def test_all_setup_homebrew_refs_in_bottles_yml_use_pinned_sha(self):
+        """Every Homebrew/actions/setup-homebrew reference in bottles.yml must
+        use the exact pinned 40-character SHA, not a mutable ref like @master."""
+        import yaml
+
+        with open(BOTTLES_WORKFLOW) as f:
+            wf = yaml.safe_load(f)
+
+        for job_name, job in wf.get("jobs", {}).items():
+            for step in job.get("steps", []):
+                uses = step.get("uses", "")
+                if "setup-homebrew" in uses:
+                    self.assertIn(
+                        self.PINNED_SHA,
+                        uses,
+                        f"Job '{job_name}': setup-homebrew must be pinned to SHA "
+                        f"{self.PINNED_SHA!r}, got {uses!r}",
+                    )
+                    self.assertNotIn(
+                        "@master",
+                        uses,
+                        f"Job '{job_name}': setup-homebrew must not use @master",
+                    )
+
+
 class TestTestWorkflow(unittest.TestCase):
     def test_formula_tests_preserve_source_fallback(self):
         text = TEST_WORKFLOW.read_text()
