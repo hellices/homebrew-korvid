@@ -491,7 +491,9 @@ that Homebrew still downloads its own dependency bottles.
 Add commands that let Homebrew select filenames from formula metadata:
 
 ```bash
-git clone --depth 1 https://github.com/hellices/homebrew-korvid.git
+brew tap hellices/korvid
+tap="$(brew --repository)/Library/Taps/hellices/homebrew-korvid"
+cp -R "$tap" "$PWD/homebrew-korvid"
 mkdir -p "$PWD/korvid-homebrew-cache"
 HOMEBREW_CACHE="$PWD/korvid-homebrew-cache" \
   brew fetch --force --deps hellices/korvid/korvid
