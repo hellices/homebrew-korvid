@@ -33,11 +33,12 @@ jobs:
         id: info
         run: |
           set -euo pipefail
-          VERSION=$(brew info --json=v2 hellices/korvid/korvid | python3 -c "
+          BREW_INFO_JSON=$(brew info --json=v2 hellices/korvid/korvid)
+          VERSION=$(python3 -c "
           import json, sys
-          data = json.load(sys.stdin)
+          data = json.loads(sys.stdin.read())
           print(data['formulae'][0]['versions']['stable'])
-          ")
+          " <<< "$BREW_INFO_JSON")
           RELEASE_TAG="korvid-${VERSION}"
           ROOT_URL="https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
@@ -45,29 +46,21 @@ jobs:
           echo "root_url=${ROOT_URL}" >> "$GITHUB_OUTPUT"
 
           # Check whether both bottle tags are already published in the formula
-          HAS_ARM=$(brew info --json=v2 hellices/korvid/korvid | python3 -c "
+          SHOULD_BUILD=$(python3 -c "
           import json, sys
-          data = json.load(sys.stdin)
+          data = json.loads(sys.stdin.read())
           files = data['formulae'][0].get('bottle', {}).get('stable', {}).get('files', {})
-          print('1' if 'arm64_sequoia' in files else '0')
-          ")
-          HAS_INTEL=$(brew info --json=v2 hellices/korvid/korvid | python3 -c "
-          import json, sys
-          data = json.load(sys.stdin)
-          files = data['formulae'][0].get('bottle', {}).get('stable', {}).get('files', {})
-          print('1' if 'sequoia' in files else '0')
-          ")
-          if [ "$HAS_ARM" = "1" ] && [ "$HAS_INTEL" = "1" ]; then
-            echo "should_build=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_build=true" >> "$GITHUB_OUTPUT"
-          fi
+          has_arm = 'arm64_sequoia' in files
+          has_intel = 'sequoia' in files
+          print('false' if has_arm and has_intel else 'true')
+          " <<< "$BREW_INFO_JSON")
+          echo "should_build=${SHOULD_BUILD}" >> "$GITHUB_OUTPUT"
 
   build:
     needs: prepare
     if: needs.prepare.outputs.should_build == 'true'
     concurrency:
-      group: bottles-${{ needs.prepare.outputs.release_tag }}
+      group: bottles-${{ needs.prepare.outputs.release_tag }}-${{ matrix.tag }}
       cancel-in-progress: false
     strategy:
       matrix:
@@ -115,7 +108,6 @@ jobs:
           MATRIX_TAG: ${{ matrix.tag }}
         run: |
           set -euo pipefail
-          json_file=$(ls *.bottle.json)
           python3 - <<'EOF'
           import json, os, sys
           tag = os.environ["MATRIX_TAG"]
@@ -180,9 +172,9 @@ jobs:
 
           echo "Release state: $RELEASE_STATE"
 
-          artifact_dir="artifacts"
-
           if [ "$RELEASE_STATE" = "absent" ] || [ "$RELEASE_STATE" = "draft" ]; then
+            artifact_dir="artifacts"
+
             # Validate local build artifacts before any upload
             python3 scripts/validate_bottle_artifacts.py \
               --artifacts "$artifact_dir" \
@@ -217,16 +209,16 @@ jobs:
             gh release edit "$RELEASE_TAG" --draft=false
 
           elif [ "$RELEASE_STATE" = "published" ]; then
-            # For a published release, validate only the already-published assets
-            published_dir="published_artifacts"
-            mkdir -p "$published_dir"
+            # For a published release, download and validate the immutable published assets
+            artifact_dir="published_artifacts"
+            mkdir -p "$artifact_dir"
             gh release download "$RELEASE_TAG" \
               --pattern "*.bottle.tar.gz" \
               --pattern "*.bottle.json" \
-              --dir "$published_dir"
+              --dir "$artifact_dir"
 
             python3 scripts/validate_bottle_artifacts.py \
-              --artifacts "$published_dir" \
+              --artifacts "$artifact_dir" \
               --version "$VERSION" \
               --root-url "$ROOT_URL" \
               --tag arm64_sequoia \
@@ -237,15 +229,34 @@ jobs:
             echo "Unexpected release state: $RELEASE_STATE" >&2
             exit 1
           fi
+
+          # Carry the validated artifact directory into subsequent steps
+          echo "VALIDATED_DIR=${artifact_dir}" >> "$GITHUB_ENV"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout bottle branch
+        run: |
+          set -euo pipefail
+          BRANCH="bottles-korvid-${VERSION}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Fetch the remote branch if it exists, then check it out
+          git fetch origin "$BRANCH" || true
+          if git show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
+            git checkout -b "$BRANCH" "origin/$BRANCH"
+          else
+            git checkout -b "$BRANCH"
+          fi
 
       - name: Update formula with bottle metadata
         run: |
           set -euo pipefail
 
-          # Collect validated JSON paths (null-delimited for safety)
-          mapfile -d '' json_paths < <(find artifacts -name "*.bottle.json" -print0)
+          # Collect validated JSON paths from the directory validated above
+          mapfile -d '' json_paths < <(find "$VALIDATED_DIR" -name "*.bottle.json" -print0)
 
           brew bottle --merge --write --no-commit --no-all-checks "${json_paths[@]}"
           ruby -c Formula/korvid.rb
@@ -255,21 +266,15 @@ jobs:
           set -euo pipefail
           BRANCH="bottles-korvid-${VERSION}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # Fetch an existing remote branch before pushing
-          git fetch origin "$BRANCH" || true
-          if git show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
-            git checkout -b "$BRANCH" "origin/$BRANCH"
-          else
-            git checkout -b "$BRANCH"
-          fi
-
           git add Formula/korvid.rb
-          git commit -m "bottles: add bottles for korvid $VERSION
+          # Guard: only commit if there is a staged difference
+          if git diff --cached --quiet; then
+            echo "No changes to Formula/korvid.rb; skipping commit."
+          else
+            git commit -m "bottles: add bottles for korvid $VERSION
 
           Co-authored-by: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+          fi
 
           git push --force-with-lease origin "$BRANCH"
 
