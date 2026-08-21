@@ -175,6 +175,57 @@ class TestBottlesWorkflow(unittest.TestCase):
             "capture once and reuse to avoid redundant calls",
         )
 
+    def test_prepare_sets_up_homebrew(self):
+        """The prepare job must invoke Homebrew/actions/setup-homebrew before
+        calling any brew command so that Homebrew is always correctly
+        initialised, matching what every other brew-using job does."""
+        import yaml
+        with open(BOTTLES_WORKFLOW) as f:
+            wf = yaml.safe_load(f)
+        prepare_steps = wf["jobs"]["prepare"]["steps"]
+        setup_uses = [
+            s.get("uses", "") for s in prepare_steps
+            if "setup-homebrew" in s.get("uses", "")
+        ]
+        self.assertTrue(
+            setup_uses,
+            "prepare job is missing Homebrew/actions/setup-homebrew step; "
+            "every brew-using job must set up Homebrew consistently",
+        )
+        # setup-homebrew must appear before the tap symlink step
+        step_uses_list = [s.get("uses", "") for s in prepare_steps]
+        step_run_list = [s.get("run", "") for s in prepare_steps]
+        setup_idx = next(
+            i for i, u in enumerate(step_uses_list) if "setup-homebrew" in u
+        )
+        tap_idx = next(
+            i for i, r in enumerate(step_run_list) if "brew --repository" in r
+        )
+        self.assertLess(
+            setup_idx,
+            tap_idx,
+            "setup-homebrew must appear before the tap-symlink step",
+        )
+
+    def test_should_build_also_checks_release_assets(self):
+        """should_build must also query the GitHub Release to check whether
+        bottle assets are present, not just inspect the formula metadata.
+        A workflow_dispatch recovery with missing release assets must
+        not be silently skipped."""
+        text = BOTTLES_WORKFLOW.read_text()
+        # The prepare job must call gh release to inspect assets
+        import yaml
+        with open(BOTTLES_WORKFLOW) as f:
+            wf = yaml.safe_load(f)
+        prepare_steps = wf["jobs"]["prepare"]["steps"]
+        prepare_text = "".join(s.get("run", "") for s in prepare_steps)
+        self.assertIn(
+            "gh release",
+            prepare_text,
+            "prepare job must query gh release to check whether bottle assets "
+            "are already present before setting should_build=false; a "
+            "workflow_dispatch recovery with deleted assets must re-trigger builds",
+        )
 
 class TestTestWorkflow(unittest.TestCase):
     def test_formula_tests_preserve_source_fallback(self):

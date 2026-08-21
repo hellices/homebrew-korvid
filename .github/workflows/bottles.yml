@@ -23,6 +23,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@master
+
       - name: Set up Homebrew tap
         run: |
           set -euo pipefail
@@ -31,6 +34,8 @@ jobs:
 
       - name: Gather version and release info
         id: info
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           BREW_INFO_JSON=$(brew info --json=v2 hellices/korvid/korvid)
@@ -45,16 +50,39 @@ jobs:
           echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
           echo "root_url=${ROOT_URL}" >> "$GITHUB_OUTPUT"
 
-          # Check whether both bottle tags are already published in the formula
-          SHOULD_BUILD=$(python3 -c "
+          # Check whether both bottle tags are present in the formula metadata
+          FORMULA_HAS_BOTTLES=$(python3 -c "
           import json, sys
           data = json.loads(sys.stdin.read())
           files = data['formulae'][0].get('bottle', {}).get('stable', {}).get('files', {})
           has_arm = 'arm64_sequoia' in files
           has_intel = 'sequoia' in files
-          print('false' if has_arm and has_intel else 'true')
+          print('true' if has_arm and has_intel else 'false')
           " <<< "$BREW_INFO_JSON")
-          echo "should_build=${SHOULD_BUILD}" >> "$GITHUB_OUTPUT"
+
+          # Also verify both bottle assets exist in the published GitHub Release.
+          # If assets were deleted and workflow_dispatch is used to recover, we
+          # must rebuild even when the formula metadata already lists the bottles.
+          RELEASE_HAS_ASSETS="false"
+          if [ "$FORMULA_HAS_BOTTLES" = "true" ]; then
+            RELEASE_ASSETS=$(gh release view "$RELEASE_TAG" --json assets 2>/dev/null \
+              | python3 -c "
+          import json, sys
+          assets = json.load(sys.stdin).get('assets', [])
+          names = [a['name'] for a in assets]
+          has_arm = any('arm64_sequoia' in n and '.bottle.tar.gz' in n for n in names)
+          has_intel = any('sequoia' in n and 'arm64' not in n and '.bottle.tar.gz' in n for n in names)
+          print('true' if has_arm and has_intel else 'false')
+          " || echo "false")
+            RELEASE_HAS_ASSETS="$RELEASE_ASSETS"
+          fi
+
+          # Only skip building when both the formula metadata and release assets confirm completion
+          if [ "$FORMULA_HAS_BOTTLES" = "true" ] && [ "$RELEASE_HAS_ASSETS" = "true" ]; then
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          fi
 
   build:
     needs: prepare
