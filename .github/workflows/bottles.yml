@@ -142,6 +142,9 @@ jobs:
       - prepare
       - build
     runs-on: ubuntu-latest
+    concurrency:
+      group: bottles-publish-${{ needs.prepare.outputs.release_tag }}
+      cancel-in-progress: false
     permissions:
       actions: write
       contents: write
@@ -196,12 +199,13 @@ jobs:
             else
               # Replace any draft assets (delete existing bottle files first)
               gh release view "$RELEASE_TAG" --json assets \
-                | python3 -c "
-          import json, sys, subprocess
+                | RELEASE_TAG="$RELEASE_TAG" python3 -c "
+          import json, os, sys, subprocess
+          tag = os.environ['RELEASE_TAG']
           assets = json.load(sys.stdin)['assets']
           for a in assets:
               if '.bottle.' in a['name']:
-                  subprocess.run(['gh', 'release', 'delete-asset', '$RELEASE_TAG', a['name'], '--yes'], check=True)
+                  subprocess.run(['gh', 'release', 'delete-asset', tag, a['name'], '--yes'], check=True)
           "
             fi
 
