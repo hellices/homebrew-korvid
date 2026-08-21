@@ -44,13 +44,15 @@ tap="$(brew --repository)/Library/Taps/hellices/homebrew-korvid"
 cp -R "$tap" "$PWD/homebrew-korvid"
 mkdir -p "$PWD/korvid-homebrew-cache"
 HOMEBREW_CACHE="$PWD/korvid-homebrew-cache" \
-  brew fetch --force --deps hellices/korvid/korvid
+  brew fetch --force --deps --force-bottle hellices/korvid/korvid
 ```
 
 This copies the tap checkout so that formula metadata is transferred verbatim,
 and populates `korvid-homebrew-cache/` with the Korvid bottle and every
-Homebrew dependency bottle. Transfer both `homebrew-korvid/` and
-`korvid-homebrew-cache/` to the restricted host.
+Homebrew dependency bottle. `--force-bottle` forces Homebrew to download the
+Korvid bottle instead of silently falling back to a source build, so staging
+fails immediately if no bottle matches this Mac. Transfer both
+`homebrew-korvid/` and `korvid-homebrew-cache/` to the restricted host.
 
 ### Disconnected installation
 
@@ -75,9 +77,15 @@ paths may substitute for removable media.
 
 **Caveats:** bottle availability is controlled by the Homebrew infrastructure
 that builds against tagged releases; verify that a bottle for your exact
-macOS version and architecture exists before staging. The `brew fetch` step
-above will fail on the connected machine if no matching bottle has been
-published yet.
+macOS version and architecture exists before staging. Because of
+`--force-bottle`, the `brew fetch` step above **fails on the connected
+machine** when no Korvid bottle matches its macOS version and architecture, so
+an unsupported or not-yet-published target is caught during staging rather than
+on the disconnected host. A normal online `brew install hellices/korvid/korvid`
+behaves differently: without `--force-bottle`, Homebrew silently falls back to
+building Korvid from source when no matching bottle exists, and that source
+build reaches PyPI (`files.pythonhosted.org`) for the Python dependencies,
+which a restricted network may block.
 
 ## Maintenance
 

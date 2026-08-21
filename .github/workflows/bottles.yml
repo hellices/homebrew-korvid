@@ -235,11 +235,37 @@ jobs:
           "
             fi
 
-            # Upload all bottle artifacts
-            find "$artifact_dir" -type f \( -name "*.bottle.tar.gz" -o -name "*.bottle.json" \) \
-              -exec gh release upload "$RELEASE_TAG" {} \;
+            # Upload every bottle artifact as a standalone loop-body statement.
+            # Under `set -euo pipefail` a single failed `gh release upload`
+            # aborts the step, unlike `find -exec`, which discards child exit
+            # codes and would let us publish a draft with missing assets.
+            while IFS= read -r -d '' artifact; do
+              gh release upload "$RELEASE_TAG" "$artifact"
+            done < <(find "$artifact_dir" -type f \( -name "*.bottle.tar.gz" -o -name "*.bottle.json" \) -print0)
 
-            # Publish the release
+            # Re-query the release and confirm every locally validated artifact
+            # (both the .bottle.tar.gz archives and their .bottle.json sidecars)
+            # actually landed as a remote asset before flipping the draft to
+            # published. A silently dropped upload would otherwise publish a
+            # release whose formula PR points at 404 download URLs.
+            gh release view "$RELEASE_TAG" --json assets \
+              | ARTIFACT_DIR="$artifact_dir" python3 -c "
+          import json, os, sys
+          from pathlib import Path
+          remote = {a['name'] for a in json.load(sys.stdin)['assets']}
+          local = set()
+          for p in Path(os.environ['ARTIFACT_DIR']).rglob('*'):
+              if p.is_file() and (p.name.endswith('.bottle.tar.gz') or p.name.endswith('.bottle.json')):
+                  local.add(p.name)
+          if not local:
+              sys.exit('no local bottle artifacts found to verify against release assets')
+          missing = sorted(local - remote)
+          if missing:
+              sys.exit('release ' + os.environ['RELEASE_TAG'] + ' is missing uploaded assets: ' + ', '.join(missing))
+          print('confirmed ' + str(len(local)) + ' local artifacts present as release assets: ' + ', '.join(sorted(local)))
+          "
+
+            # Publish the release only after confirming completeness
             gh release edit "$RELEASE_TAG" --draft=false
 
           elif [ "$RELEASE_STATE" = "published" ]; then

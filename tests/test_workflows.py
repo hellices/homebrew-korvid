@@ -228,6 +228,96 @@ class TestBottlesWorkflow(unittest.TestCase):
         )
 
     # ------------------------------------------------------------------ #
+    # Final-review contract tests: observable uploads + completeness check #
+    # ------------------------------------------------------------------ #
+
+    def test_release_upload_failures_fail_the_step(self):
+        r"""A failed `gh release upload` must fail the publish step.
+
+        `find ... -exec gh release upload ... \;` swallows each child's exit
+        status: find returns 0 even when an upload fails, so the workflow can
+        publish a release with missing assets and then open a formula PR that
+        points at 404 download URLs. Uploads must instead run as standalone
+        statements under `set -euo pipefail` (e.g. a read loop) so any nonzero
+        upload aborts the step.
+        """
+        text = BOTTLES_WORKFLOW.read_text()
+        self.assertNotIn(
+            "-exec gh release upload",
+            text,
+            "find -exec does not propagate gh release upload failures; upload in "
+            "a loop whose nonzero status fails the step under set -euo pipefail",
+        )
+        # Uploads must run as a standalone command inside a read loop so set -e
+        # observes a failed upload (failures in a loop *condition* are ignored,
+        # but a loop-*body* statement aborts the step).
+        self.assertRegex(
+            text,
+            r"while[^\n]*read[^\n]*\n\s*gh release upload",
+            "bottle uploads must run `gh release upload` as a standalone loop-body "
+            "statement so a failed upload aborts the step",
+        )
+
+    def test_draft_publish_requires_remote_completeness_check(self):
+        """Before publishing a draft, re-query remote assets and confirm every
+        locally validated artifact basename is present.
+
+        The completeness check must run between the upload and
+        `gh release edit --draft=false`, and must cover *all* validated
+        artifacts -- both the `.bottle.tar.gz` archives and their `.bottle.json`
+        sidecars -- not merely the two tarballs. Otherwise a dropped upload can
+        be published with missing assets.
+        """
+        import yaml
+        with open(BOTTLES_WORKFLOW) as f:
+            wf = yaml.safe_load(f)
+        publish_steps = wf["jobs"]["publish"]["steps"]
+        step = next(
+            (s for s in publish_steps
+             if "--draft=false" in (s.get("run") or "")
+             and "gh release upload" in (s.get("run") or "")),
+            None,
+        )
+        self.assertIsNotNone(
+            step,
+            "no publish step both uploads assets and flips the draft to published",
+        )
+        run = step["run"]
+
+        upload_idx = run.index("gh release upload")
+        publish_idx = run.index("--draft=false")
+        self.assertLess(
+            upload_idx, publish_idx,
+            "assets must be uploaded before the release is published",
+        )
+
+        after_upload = run[upload_idx:publish_idx]
+        # A remote re-query of the release assets must occur after uploading and
+        # before publishing the draft.
+        self.assertIn(
+            "gh release view",
+            after_upload,
+            "before `--draft=false`, re-query the release assets "
+            "(`gh release view --json assets`) to confirm the upload landed",
+        )
+        self.assertIn("--json assets", after_upload)
+
+        # Isolate the completeness-check block (from its re-query to publish) so
+        # the assertions below cannot be satisfied by the upload loop's own find.
+        check_block = after_upload[after_upload.index("gh release view"):]
+        self.assertIn(
+            ".bottle.tar.gz",
+            check_block,
+            "completeness check must cover the .bottle.tar.gz archives",
+        )
+        self.assertIn(
+            ".bottle.json",
+            check_block,
+            "completeness check must cover every validated artifact basename "
+            "(including the .bottle.json sidecars), not only the two tarballs",
+        )
+
+    # ------------------------------------------------------------------ #
     # New contract tests for root-cause fix (task-5)                      #
     # ------------------------------------------------------------------ #
 
