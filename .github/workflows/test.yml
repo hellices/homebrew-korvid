@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
   # A formula can break without anyone touching it: a yanked sdist or a
   # withdrawn upstream release is only visible from an actual build.
   schedule:
@@ -60,4 +61,86 @@ jobs:
         run: brew test hellices/korvid/korvid
 
       - name: The installed command reports its version
+        run: korvid --version
+
+  test-bottle:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@master
+
+      - name: Tap this checkout
+        run: |
+          tap="$(brew --repository)/Library/Taps/hellices/homebrew-korvid"
+          mkdir -p "$(dirname "$tap")"
+          ln -s "$GITHUB_WORKSPACE" "$tap"
+          brew tap-info hellices/korvid
+
+      - name: Check for matching bottle
+        id: bottle_check
+        run: |
+          info=$(brew info --json=v2 hellices/korvid/korvid)
+          tag=$(echo "$info" | python3 -c "
+          import json, sys, platform
+          data = json.load(sys.stdin)
+          formula = data['formulae'][0]
+          bottles = formula.get('bottle', {}).get('stable', {}).get('files', {})
+          # Map arch to expected bottle tag
+          arch = platform.machine()
+          uname = platform.uname()
+          # Determine which tags to look for
+          candidates = list(bottles.keys())
+          # Pick the first tag that matches the current OS/arch pattern
+          import subprocess
+          os_ver = subprocess.check_output(['sw_vers', '-productVersion'], text=True).strip()
+          major = os_ver.split('.')[0]
+          # arm64 -> sequoia (macos 15), x86_64 -> sequoia_x86_64
+          suffix = '_x86_64' if arch == 'x86_64' else ''
+          target = 'sequoia' + suffix if major == '15' else 'ventura' + suffix if major == '13' else 'sonoma' + suffix if major == '14' else major + suffix
+          print(target if target in candidates else '')
+          " 2>/dev/null || echo "")
+          if [ -z "$tag" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Remove cached Korvid archive
+        if: steps.bottle_check.outputs.skip == 'false'
+        run: |
+          brew cleanup hellices/korvid/korvid 2>/dev/null || true
+          rm -rf "$(brew --cache)/downloads/"*korvid* 2>/dev/null || true
+
+      - name: Block files.pythonhosted.org
+        if: steps.bottle_check.outputs.skip == 'false'
+        run: |
+          echo "127.0.0.1 files.pythonhosted.org" | sudo tee -a /etc/hosts
+          echo "::1 files.pythonhosted.org" | sudo tee -a /etc/hosts
+
+      - name: Install bottle
+        if: steps.bottle_check.outputs.skip == 'false'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          set -o pipefail
+          brew install --verbose hellices/korvid/korvid 2>&1 | tee bottle-install.log
+
+      - name: Verify bottle was poured
+        if: steps.bottle_check.outputs.skip == 'false'
+        run: grep "Pouring korvid--" bottle-install.log
+
+      - name: brew test
+        if: steps.bottle_check.outputs.skip == 'false'
+        run: brew test hellices/korvid/korvid
+
+      - name: The installed command reports its version
+        if: steps.bottle_check.outputs.skip == 'false'
         run: korvid --version

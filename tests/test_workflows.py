@@ -1,10 +1,11 @@
-"""Contract tests for .github/workflows/bottles.yml."""
+"""Contract tests for .github/workflows/bottles.yml and test.yml."""
 from __future__ import annotations
 
 import unittest
 from pathlib import Path
 
 BOTTLES_WORKFLOW = Path(__file__).parent.parent / ".github" / "workflows" / "bottles.yml"
+TEST_WORKFLOW = Path(__file__).parent.parent / ".github" / "workflows" / "test.yml"
 
 
 class TestBottlesWorkflow(unittest.TestCase):
@@ -173,6 +174,22 @@ class TestBottlesWorkflow(unittest.TestCase):
             f"brew info --json=v2 is called {brew_info_calls} times in prepare; "
             "capture once and reuse to avoid redundant calls",
         )
+
+
+class TestTestWorkflow(unittest.TestCase):
+    def test_formula_tests_preserve_source_fallback(self):
+        text = TEST_WORKFLOW.read_text()
+        self.assertIn("brew install --build-from-source", text)
+        self.assertIn("ubuntu-latest", text)
+        self.assertIn("macos-latest", text)
+
+    def test_formula_tests_verify_bottle_without_pypi(self):
+        text = TEST_WORKFLOW.read_text()
+        self.assertIn("workflow_dispatch:", text)
+        self.assertIn("macos-15-intel", text)
+        self.assertIn("files.pythonhosted.org", text)
+        self.assertIn("brew install --verbose hellices/korvid/korvid", text)
+        self.assertIn("Pouring korvid--", text)
 
 
 if __name__ == "__main__":
