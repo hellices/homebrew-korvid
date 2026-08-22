@@ -81,11 +81,16 @@ class TestBottlesWorkflow(unittest.TestCase):
         self.assertIn("brew bottle --merge --write --no-commit", text)
 
     def test_bottle_workflow_opens_but_never_merges_a_pr(self):
-        text = BOTTLES_WORKFLOW.read_text()
-        self.assertIn("gh pr create", text)
-        self.assertIn("gh workflow run test.yml", text)
-        self.assertNotIn("gh pr merge", text)
-        self.assertNotIn("--auto", text)
+        wf = load_workflow(BOTTLES_WORKFLOW)
+        run_scripts = "\n".join(
+            step.get("run") or ""
+            for job in wf["jobs"].values()
+            for step in job.get("steps", [])
+        )
+
+        self.assertIn("gh pr create", run_scripts)
+        self.assertIn("gh workflow run test.yml", run_scripts)
+        self.assertNotIn("gh pr merge", run_scripts)
 
     def test_draft_asset_deletion_passes_release_tag_via_env_not_literal(self):
         """The Python block that deletes draft assets must not embed $RELEASE_TAG
@@ -187,6 +192,22 @@ class TestBottlesWorkflow(unittest.TestCase):
             run,
             "merge step must not hardcode 'find artifacts'; it must use a variable "
             "that reflects whichever dir was validated",
+        )
+
+    def test_formula_merge_requires_exactly_two_validated_json_files(self):
+        wf = load_workflow(BOTTLES_WORKFLOW)
+        merge_step = next(
+            step
+            for step in wf["jobs"]["publish"]["steps"]
+            if "brew bottle --merge" in (step.get("run") or "")
+        )
+        run = merge_step["run"]
+
+        cardinality_check = '"${#json_paths[@]}" -ne 2'
+        self.assertIn(cardinality_check, run)
+        self.assertLess(
+            run.index(cardinality_check),
+            run.index("brew bottle --merge"),
         )
 
     def test_branch_checkout_before_formula_merge(self):

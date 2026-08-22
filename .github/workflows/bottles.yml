@@ -371,6 +371,10 @@ jobs:
 
           # Collect validated JSON paths from the directory validated above
           mapfile -d '' json_paths < <(find "$VALIDATED_DIR" -name "*.bottle.json" -print0)
+          if [ "${#json_paths[@]}" -ne 2 ]; then
+            echo "Expected 2 validated bottle JSON files under $VALIDATED_DIR, found ${#json_paths[@]}." >&2
+            exit 1
+          fi
 
           brew bottle --merge --write --no-commit --no-all-checks "${json_paths[@]}"
           ruby -c Formula/korvid.rb
