@@ -76,17 +76,15 @@ jobs:
               exit 1
             fi
             rm -f "$release_error"
-            RELEASE_ASSETS=$(python3 -c "
+            RELEASE_ASSETS=$(PYTHONPATH="$GITHUB_WORKSPACE" python3 -c "
           import json, sys
+          from scripts.validate_bottle_artifacts import expected_release_asset_names
           version = sys.argv[1]
           assets = json.load(sys.stdin).get('assets', [])
           names = {a['name'] for a in assets}
-          expected = {
-              f'korvid-{version}.arm64_sequoia.bottle.tar.gz',
-              f'korvid-{version}.sequoia.bottle.tar.gz',
-              f'korvid--{version}.arm64_sequoia.bottle.json',
-              f'korvid--{version}.sequoia.bottle.json',
-          }
+          expected = expected_release_asset_names(
+              version, {'arm64_sequoia', 'sequoia'}
+          )
           print('true' if expected <= names else 'false')
           " "$VERSION" <<< "$release_json")
             RELEASE_HAS_ASSETS="$RELEASE_ASSETS"

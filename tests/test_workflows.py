@@ -429,18 +429,8 @@ class TestBottlesWorkflow(unittest.TestCase):
             "prepare job must query gh release to check whether bottle assets "
             "are already present before setting should_build=false",
         )
-        for expected in (
-            "arm64_sequoia.bottle.tar.gz",
-            "sequoia.bottle.tar.gz",
-            "arm64_sequoia.bottle.json",
-            "sequoia.bottle.json",
-        ):
-            self.assertIn(
-                expected,
-                prepare_text,
-                f"prepare must require release asset {expected!r} before "
-                "setting should_build=false",
-            )
+        self.assertIn("'arm64_sequoia'", prepare_text)
+        self.assertIn("'sequoia'", prepare_text)
         self.assertIn(
             'if [ "$RELEASE_HAS_ASSETS" != "true" ]',
             prepare_text,
@@ -452,6 +442,12 @@ class TestBottlesWorkflow(unittest.TestCase):
         self.assertIn("exit 1", prepare_text[incomplete_idx:formula_done_idx])
         self.assertNotIn("2>/dev/null", prepare_text)
         self.assertIn("cat \"$release_error\"", prepare_text)
+        self.assertIn(
+            "from scripts.validate_bottle_artifacts import "
+            "expected_release_asset_names",
+            prepare_text,
+        )
+        self.assertIn('PYTHONPATH="$GITHUB_WORKSPACE" python3', prepare_text)
 
     def test_release_lookup_only_treats_not_found_as_absent(self):
         wf = load_workflow(BOTTLES_WORKFLOW)
@@ -817,6 +813,41 @@ class TestTestWorkflow(unittest.TestCase):
         )
 
         self.assertIn("set -euo pipefail", install_step["run"])
+
+    def test_bottle_cache_cleanup_verifies_postcondition(self):
+        wf = load_workflow(TEST_WORKFLOW)
+        cleanup_step = next(
+            step
+            for step in wf["jobs"]["test-bottle"]["steps"]
+            if step.get("name") == "Remove cached Korvid archive"
+        )
+        run = cleanup_step["run"]
+
+        self.assertTrue(run.lstrip().startswith("set -euo pipefail"))
+        self.assertIn("find", run)
+        self.assertIn("-exec rm -rf -- {} +", run)
+        self.assertIn("-print -quit", run)
+        self.assertNotIn("-delete", run)
+        self.assertNotIn("|| true", run)
+
+    def test_pypi_block_verifies_hosts_entries(self):
+        wf = load_workflow(TEST_WORKFLOW)
+        block_step = next(
+            step
+            for step in wf["jobs"]["test-bottle"]["steps"]
+            if step.get("name") == "Block files.pythonhosted.org"
+        )
+        run = block_step["run"]
+
+        self.assertTrue(run.lstrip().startswith("set -euo pipefail"))
+        self.assertIn(
+            'grep -Fxq "127.0.0.1 files.pythonhosted.org" /etc/hosts',
+            run,
+        )
+        self.assertIn(
+            'grep -Fxq "::1 files.pythonhosted.org" /etc/hosts',
+            run,
+        )
 
     def test_bottle_tag_resolver_uses_strict_shell_mode(self):
         wf = load_workflow(TEST_WORKFLOW)

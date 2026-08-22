@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from scripts.validate_bottle_artifacts import (
+    expected_release_asset_names,
     stage_release_assets,
     validate_artifacts,
 )
@@ -110,6 +111,17 @@ class _FixtureBase(unittest.TestCase):
 
 
 class ValidateBottleArtifactsTests(_FixtureBase):
+    def test_expected_release_asset_names_use_validated_naming_rules(self) -> None:
+        self.assertEqual(
+            expected_release_asset_names(VERSION, TAGS),
+            {
+                _remote_name("arm64_sequoia"),
+                _remote_name("sequoia"),
+                _json_name("arm64_sequoia"),
+                _json_name("sequoia"),
+            },
+        )
+
     def test_rejects_unexpected_formula_key(self) -> None:
         tag = "arm64_sequoia"
         archive = self._archive(_local_name(tag), b"arm64 bottle contents")

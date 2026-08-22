@@ -43,6 +43,15 @@ def _expected_json_filename(local_filename: str) -> str:
     return f"{local_filename[:-len(suffix)]}.bottle.json"
 
 
+def expected_release_asset_names(version: str, tags: set[str]) -> set[str]:
+    names: set[str] = set()
+    for tag in tags:
+        local_filename = f"korvid--{version}.{tag}.bottle.tar.gz"
+        names.add(_expected_remote_filename(local_filename))
+        names.add(_expected_json_filename(local_filename))
+    return names
+
+
 @dataclass(frozen=True)
 class BottleArtifact:
     json_path: Path
