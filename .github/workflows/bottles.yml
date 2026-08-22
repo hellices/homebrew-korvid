@@ -31,8 +31,10 @@ jobs:
       - name: Set up Homebrew tap
         run: |
           set -euo pipefail
-          mkdir -p "$(brew --repository)/Library/Taps/hellices"
-          ln -sfn "$GITHUB_WORKSPACE" "$(brew --repository)/Library/Taps/hellices/homebrew-korvid"
+          tap="$(brew --repository)/Library/Taps/hellices/homebrew-korvid"
+          mkdir -p "$(dirname "$tap")"
+          rm -rf -- "$tap"
+          ln -s "$GITHUB_WORKSPACE" "$tap"
 
       - name: Gather version and release info
         id: info
@@ -126,8 +128,10 @@ jobs:
       - name: Set up Homebrew tap
         run: |
           set -euo pipefail
-          mkdir -p "$(brew --repository)/Library/Taps/hellices"
-          ln -sfn "$GITHUB_WORKSPACE" "$(brew --repository)/Library/Taps/hellices/homebrew-korvid"
+          tap="$(brew --repository)/Library/Taps/hellices/homebrew-korvid"
+          mkdir -p "$(dirname "$tap")"
+          rm -rf -- "$tap"
+          ln -s "$GITHUB_WORKSPACE" "$tap"
 
       - name: Audit formula
         run: |
@@ -213,8 +217,10 @@ jobs:
       - name: Set up Homebrew tap
         run: |
           set -euo pipefail
-          mkdir -p "$(brew --repository)/Library/Taps/hellices"
-          ln -sfn "$GITHUB_WORKSPACE" "$(brew --repository)/Library/Taps/hellices/homebrew-korvid"
+          tap="$(brew --repository)/Library/Taps/hellices/homebrew-korvid"
+          mkdir -p "$(dirname "$tap")"
+          rm -rf -- "$tap"
+          ln -s "$GITHUB_WORKSPACE" "$tap"
 
       - name: Download bottle artifacts
         uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e  # v4.2.1

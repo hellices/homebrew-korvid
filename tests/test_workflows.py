@@ -384,6 +384,21 @@ class TestBottlesWorkflow(unittest.TestCase):
             "setup-homebrew must appear before the tap-symlink step",
         )
 
+    def test_tap_setup_replaces_existing_path(self):
+        wf = load_workflow(BOTTLES_WORKFLOW)
+        tap_steps = [
+            step
+            for job in wf["jobs"].values()
+            for step in job.get("steps", [])
+            if step.get("name") == "Set up Homebrew tap"
+        ]
+
+        self.assertEqual(len(tap_steps), 3)
+        for step in tap_steps:
+            run = step["run"]
+            self.assertIn('rm -rf -- "$tap"', run)
+            self.assertLess(run.index('rm -rf -- "$tap"'), run.index("ln -s"))
+
     def test_should_build_also_checks_release_assets(self):
         """should_build must also query the GitHub Release to check whether
         every bottle archive and JSON sidecar is present, not just inspect the
