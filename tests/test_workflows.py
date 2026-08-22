@@ -89,11 +89,9 @@ class TestBottlesWorkflow(unittest.TestCase):
 
     def test_checkout_persist_credentials_scoped_by_job(self):
         """actions/checkout persists the job's GITHUB_TOKEN in the workspace git
-        config by default. Only `publish` needs it (it pushes the bottle
-        branch), so `prepare` and `build` -- which only read the checkout and
-        never push -- must check out with `persist-credentials: false` so no
-        usable token is left behind in the workspace for the rest of the job.
-        `publish` must NOT disable it, or its `git push` would lose auth."""
+        config by default. `prepare` and `build` never push, so they must disable
+        it. The publish job's setup-homebrew step replaces the checkout's .git,
+        so it must receive the token itself to persist git authentication."""
         wf = load_workflow(BOTTLES_WORKFLOW)
         jobs = wf["jobs"]
 
@@ -124,13 +122,17 @@ class TestBottlesWorkflow(unittest.TestCase):
                 f"{with_block['persist-credentials']!r}",
             )
 
-        # publish pushes the bottle branch, so it must retain credentials.
-        publish_with = checkout_step("publish").get("with") or {}
-        self.assertIsNot(
-            publish_with.get("persist-credentials", True),
-            False,
-            "publish checkout must retain credentials (it pushes the bottle "
-            "branch); do not set persist-credentials: false there",
+        publish_steps = jobs["publish"]["steps"]
+        publish_setup = next(
+            step
+            for step in publish_steps
+            if "setup-homebrew" in (step.get("uses") or "")
+        )
+        self.assertEqual(
+            publish_setup.get("with", {}).get("token"),
+            "${{ secrets.GITHUB_TOKEN }}",
+            "publish setup-homebrew replaces the checkout repository and must "
+            "persist a token that survives for git push",
         )
 
     def test_publish_job_has_concurrency_group(self):
@@ -303,9 +305,8 @@ class TestBottlesWorkflow(unittest.TestCase):
     def test_should_build_also_checks_release_assets(self):
         """should_build must also query the GitHub Release to check whether
         every bottle archive and JSON sidecar is present, not just inspect the
-        formula metadata.
-        A workflow_dispatch recovery with missing release assets must
-        not be silently skipped."""
+        formula metadata. If an already-published release is incomplete, fail
+        before the matrix build because immutable assets cannot be repaired."""
         wf = load_workflow(BOTTLES_WORKFLOW)
         prepare_steps = wf["jobs"]["prepare"]["steps"]
         prepare_text = "".join(s.get("run", "") for s in prepare_steps)
@@ -313,8 +314,7 @@ class TestBottlesWorkflow(unittest.TestCase):
             "gh release",
             prepare_text,
             "prepare job must query gh release to check whether bottle assets "
-            "are already present before setting should_build=false; a "
-            "workflow_dispatch recovery with deleted assets must re-trigger builds",
+            "are already present before setting should_build=false",
         )
         for expected in (
             "arm64_sequoia.bottle.tar.gz",
@@ -328,6 +328,15 @@ class TestBottlesWorkflow(unittest.TestCase):
                 f"prepare must require release asset {expected!r} before "
                 "setting should_build=false",
             )
+        self.assertIn(
+            'if [ "$RELEASE_HAS_ASSETS" != "true" ]',
+            prepare_text,
+        )
+        incomplete_idx = prepare_text.index(
+            'if [ "$RELEASE_HAS_ASSETS" != "true" ]'
+        )
+        formula_done_idx = prepare_text.index("should_build=false")
+        self.assertIn("exit 1", prepare_text[incomplete_idx:formula_done_idx])
 
     # ------------------------------------------------------------------ #
     # Final-review contract tests: observable uploads + completeness check #

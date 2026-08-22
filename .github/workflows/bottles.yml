@@ -62,9 +62,9 @@ jobs:
           print('true' if has_arm and has_intel else 'false')
           " <<< "$BREW_INFO_JSON")
 
-          # Also verify both bottle assets exist in the published GitHub Release.
-          # If assets were deleted and workflow_dispatch is used to recover, we
-          # must rebuild even when the formula metadata already lists the bottles.
+          # A formula with bottle metadata must point at a complete immutable
+          # release. Missing published assets require human recovery; rebuilding
+          # cannot restore them without violating the immutability policy.
           RELEASE_HAS_ASSETS="false"
           if [ "$FORMULA_HAS_BOTTLES" = "true" ]; then
             RELEASE_ASSETS=$(gh release view "$RELEASE_TAG" --json assets 2>/dev/null \
@@ -84,8 +84,11 @@ jobs:
             RELEASE_HAS_ASSETS="$RELEASE_ASSETS"
           fi
 
-          # Only skip building when both the formula metadata and release assets confirm completion
-          if [ "$FORMULA_HAS_BOTTLES" = "true" ] && [ "$RELEASE_HAS_ASSETS" = "true" ]; then
+          if [ "$FORMULA_HAS_BOTTLES" = "true" ]; then
+            if [ "$RELEASE_HAS_ASSETS" != "true" ]; then
+              echo "Formula lists bottles but the immutable release is incomplete; human recovery is required." >&2
+              exit 1
+            fi
             echo "should_build=false" >> "$GITHUB_OUTPUT"
           else
             echo "should_build=true" >> "$GITHUB_OUTPUT"
@@ -198,6 +201,8 @@ jobs:
 
       - name: Set up Homebrew
         uses: Homebrew/actions/setup-homebrew@a657b8b0cd35d0f65cce41fce9b24cf054b49869  # master
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Homebrew tap
         run: |
