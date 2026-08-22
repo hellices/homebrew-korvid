@@ -232,19 +232,29 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Only GitHub's explicit not-found response means no release. Network,
-          # authentication, and rate-limit failures must remain visible.
+          # Only an HTTP 404 means no release. Network, authentication, and
+          # rate-limit failures must remain visible.
           release_error=$(mktemp)
-          if release_json=$(gh release view "$RELEASE_TAG" --json isDraft,tagName 2>"$release_error"); then
-            RELEASE_STATE=$(python3 -c \
-              "import json,sys; d=json.load(sys.stdin); print('draft' if d['isDraft'] else 'published')" \
-              <<< "$release_json")
-          elif grep -Fxq "release not found" "$release_error"; then
-            RELEASE_STATE="absent"
+          release_endpoint="repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}"
+          if release_response=$(gh api --include "$release_endpoint" 2>"$release_error"); then
+            RELEASE_STATE=$(python3 -c "
+          import json, re, sys
+          response = sys.stdin.read()
+          parts = re.split(r'\r?\n\r?\n', response, maxsplit=1)
+          if len(parts) != 2:
+              sys.exit('release API response did not contain headers and a JSON body')
+          data = json.loads(parts[1])
+          print('draft' if data['draft'] else 'published')
+          " <<< "$release_response")
           else
-            cat "$release_error" >&2
-            rm -f "$release_error"
-            exit 1
+            status_line=${release_response%%$'\n'*}
+            if [[ "$status_line" =~ ^HTTP/[^[:space:]]+[[:space:]]404[[:space:]] ]]; then
+              RELEASE_STATE="absent"
+            else
+              cat "$release_error" >&2
+              rm -f "$release_error"
+              exit 1
+            fi
           fi
           rm -f "$release_error"
 

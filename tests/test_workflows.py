@@ -447,7 +447,7 @@ class TestBottlesWorkflow(unittest.TestCase):
         )
         self.assertIn('PYTHONPATH="$GITHUB_WORKSPACE" python3', prepare_text)
 
-    def test_release_lookup_only_treats_not_found_as_absent(self):
+    def test_release_lookup_only_treats_http_404_as_absent(self):
         wf = load_workflow(BOTTLES_WORKFLOW)
         publish_run = next(
             step["run"]
@@ -455,8 +455,11 @@ class TestBottlesWorkflow(unittest.TestCase):
             if step.get("name") == "Determine release state and validate/publish"
         )
 
-        self.assertIn("release not found", publish_run)
+        self.assertIn("gh api --include", publish_run)
+        self.assertIn("HTTP/", publish_run)
+        self.assertIn("404", publish_run)
         self.assertIn("cat \"$release_error\"", publish_run)
+        self.assertNotIn("release not found", publish_run)
         self.assertNotIn('|| echo "absent"', publish_run)
         self.assertNotIn("2>/dev/null", publish_run)
 
