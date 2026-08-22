@@ -72,7 +72,7 @@ class _FixtureBase(unittest.TestCase):
             }
         }
 
-    def _write_json(self, name: str, payload: dict) -> Path:
+    def _write_json(self, name: str, payload: object) -> Path:
         path = self.root / name
         path.write_text(json.dumps(payload), encoding="utf-8")
         return path
@@ -110,6 +110,56 @@ class _FixtureBase(unittest.TestCase):
 
 
 class ValidateBottleArtifactsTests(_FixtureBase):
+    def test_rejects_non_mapping_metadata_shapes(self) -> None:
+        tag = "arm64_sequoia"
+        valid = self._payload(
+            tag,
+            local_filename=_local_name(tag),
+            filename=_remote_name(tag),
+            sha256="unused",
+        )
+        formula_key = "hellices/korvid/korvid"
+        cases = (
+            ("payload", ["not a mapping"], "top-level JSON must be an object"),
+            ("entry", {formula_key: []}, "formula entry must be an object"),
+            (
+                "formula",
+                {formula_key: {"formula": [], "bottle": {}}},
+                "formula metadata must be an object",
+            ),
+            (
+                "bottle",
+                {formula_key: {"formula": valid[formula_key]["formula"], "bottle": []}},
+                "bottle metadata must be an object",
+            ),
+            (
+                "tags",
+                {
+                    formula_key: {
+                        "formula": valid[formula_key]["formula"],
+                        "bottle": {"root_url": ROOT_URL, "tags": []},
+                    }
+                },
+                "bottle tags must be an object",
+            ),
+            (
+                "tag metadata",
+                {
+                    formula_key: {
+                        "formula": valid[formula_key]["formula"],
+                        "bottle": {"root_url": ROOT_URL, "tags": {tag: []}},
+                    }
+                },
+                "platform metadata must be an object",
+            ),
+        )
+
+        for label, payload, message in cases:
+            with self.subTest(label=label):
+                self._write_json(_json_name(tag), payload)
+                with self.assertRaisesRegex(ValueError, message):
+                    validate_artifacts(self.root, VERSION, ROOT_URL, {tag})
+
     def test_accepts_complete_two_architecture_set(self) -> None:
         self._write_local_fixture()
 

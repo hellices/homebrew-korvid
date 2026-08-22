@@ -73,23 +73,35 @@ def _collect_artifacts(
     artifacts: list[BottleArtifact] = []
     for json_path in json_paths:
         payload = json.loads(json_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError(f"{json_path}: top-level JSON must be an object")
         if len(payload) != 1:
             raise ValueError(f"{json_path}: expected exactly one formula")
         entry = next(iter(payload.values()))
+        if not isinstance(entry, dict):
+            raise ValueError(f"{json_path}: formula entry must be an object")
         formula = entry.get("formula", {})
+        if not isinstance(formula, dict):
+            raise ValueError(f"{json_path}: formula metadata must be an object")
         if formula.get("name") != "korvid":
             raise ValueError(f"{json_path}: expected formula name korvid")
         if formula.get("pkg_version") != version:
             raise ValueError(f"{json_path}: expected package version {version}")
 
         bottle = entry.get("bottle", {})
+        if not isinstance(bottle, dict):
+            raise ValueError(f"{json_path}: bottle metadata must be an object")
         if bottle.get("root_url") != root_url:
             raise ValueError(f"{json_path}: unexpected bottle root URL")
         tags = bottle.get("tags", {})
+        if not isinstance(tags, dict):
+            raise ValueError(f"{json_path}: bottle tags must be an object")
         if len(tags) != 1:
             raise ValueError(f"{json_path}: expected exactly one platform tag")
 
         tag, metadata = next(iter(tags.items()))
+        if not isinstance(metadata, dict):
+            raise ValueError(f"{json_path}: platform metadata must be an object")
         if tag in seen_tags:
             raise ValueError(f"{json_path}: duplicate platform tag {tag}")
         seen_tags.add(tag)
