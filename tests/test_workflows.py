@@ -287,6 +287,22 @@ class TestBottlesWorkflow(unittest.TestCase):
 
         self.assertIn(".[0].number // empty", pr_step["run"])
 
+    def test_pr_creation_skips_branch_without_commits_ahead_of_main(self):
+        wf = load_workflow(BOTTLES_WORKFLOW)
+        pr_step = next(
+            step
+            for step in wf["jobs"]["publish"]["steps"]
+            if step.get("name") == "Open pull request if none exists"
+        )
+        run = pr_step["run"]
+
+        self.assertIn("git fetch origin main", run)
+        self.assertIn("git rev-list --count FETCH_HEAD..HEAD", run)
+        self.assertLess(
+            run.index("git rev-list --count FETCH_HEAD..HEAD"),
+            run.index("gh pr list"),
+        )
+
     def test_existing_pr_lookup_propagates_gh_failures(self):
         wf = load_workflow(BOTTLES_WORKFLOW)
         pr_step = next(

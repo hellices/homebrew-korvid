@@ -411,6 +411,13 @@ jobs:
           set -euo pipefail
           BRANCH="bottles-korvid-${VERSION}"
 
+          git fetch origin main
+          AHEAD_COUNT=$(git rev-list --count FETCH_HEAD..HEAD)
+          if [ "$AHEAD_COUNT" -eq 0 ]; then
+            echo "Bottle branch has no commits ahead of main; skipping PR creation."
+            exit 0
+          fi
+
           EXISTING_PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
           if [ -z "$EXISTING_PR" ]; then
             gh pr create \
