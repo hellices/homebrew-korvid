@@ -21,7 +21,7 @@ jobs:
         os: [macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           persist-credentials: false
 
@@ -70,7 +70,7 @@ jobs:
         os: [macos-15, macos-15-intel]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           persist-credentials: false
 
@@ -88,7 +88,7 @@ jobs:
         id: bottle_check
         run: |
           info=$(brew info --json=v2 hellices/korvid/korvid)
-          tag=$(echo "$info" | python3 -c "
+          bottle_filename=$(echo "$info" | python3 -c "
           import json, sys, platform, subprocess
 
           data = json.load(sys.stdin)
@@ -130,6 +130,17 @@ jobs:
           if not isinstance(files, dict):
               print('SCHEMA_ERROR: stable.files is not a dict', file=sys.stderr)
               sys.exit(1)
+          if 'versions' not in formula:
+              print('SCHEMA_ERROR: formula entry missing versions key', file=sys.stderr)
+              sys.exit(1)
+          versions = formula['versions']
+          if not isinstance(versions, dict):
+              print('SCHEMA_ERROR: versions is not a dict', file=sys.stderr)
+              sys.exit(1)
+          version = versions.get('stable')
+          if not isinstance(version, str) or not version:
+              print('SCHEMA_ERROR: versions.stable is not a non-empty string', file=sys.stderr)
+              sys.exit(1)
 
           # Schema is structurally valid; check whether this runner has a bottle.
           # Homebrew tags: arm64 -> arm64_<base>, x86_64 -> <base>
@@ -139,12 +150,13 @@ jobs:
           tag_map = {'15': 'sequoia', '14': 'sonoma', '13': 'ventura'}
           base = tag_map.get(major, major)
           target = 'arm64_' + base if arch == 'arm64' else base
-          print(target if target in files else '')
+          print(f'korvid-{version}.{target}.bottle.tar.gz' if target in files else '')
           ")
-          if [ -z "$tag" ]; then
+          if [ -z "$bottle_filename" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "filename=$bottle_filename" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Remove cached Korvid archive
@@ -169,7 +181,7 @@ jobs:
 
       - name: Verify bottle was poured
         if: steps.bottle_check.outputs.skip == 'false'
-        run: grep "Pouring korvid" bottle-install.log
+        run: grep -F "Pouring ${{ steps.bottle_check.outputs.filename }}" bottle-install.log
 
       - name: brew test
         if: steps.bottle_check.outputs.skip == 'false'

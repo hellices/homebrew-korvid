@@ -238,6 +238,22 @@ class TestBottlesWorkflow(unittest.TestCase):
             "Dead 'json_file=$(ls *.bottle.json)' assignment must be removed",
         )
 
+    def test_build_requires_exactly_one_bottle_json(self):
+        wf = load_workflow(BOTTLES_WORKFLOW)
+        verify_step = next(
+            step
+            for step in wf["jobs"]["build"]["steps"]
+            if step.get("name") == "Verify bottle tag matches matrix"
+        )
+        run = verify_step["run"]
+
+        self.assertIn("json_files", run)
+        self.assertIn("len(json_files) != 1", run)
+        self.assertNotIn(
+            'next(f for f in os.listdir(".") if f.endswith(".bottle.json"))',
+            run,
+        )
+
     def test_prepare_calls_brew_info_at_most_once(self):
         """brew info --json=v2 must be called at most once in the prepare job
         (capture output and reuse instead of three separate calls)."""
@@ -572,6 +588,20 @@ class TestBottlesWorkflow(unittest.TestCase):
 
 class TestTestWorkflow(unittest.TestCase):
     PINNED_SETUP_HOMEBREW_SHA = "a657b8b0cd35d0f65cce41fce9b24cf054b49869"
+    PINNED_CHECKOUT_SHA = "11bd71901bbe5b1630ceea73d27597364c9af683"
+
+    def test_checkout_refs_use_pinned_sha(self):
+        wf = load_workflow(TEST_WORKFLOW)
+        refs = [
+            step["uses"]
+            for job in wf["jobs"].values()
+            for step in job.get("steps", [])
+            if "actions/checkout" in (step.get("uses") or "")
+        ]
+
+        self.assertTrue(refs, "test workflow must check out the repository")
+        for ref in refs:
+            self.assertEqual(ref, "actions/checkout@" + self.PINNED_CHECKOUT_SHA)
 
     def test_setup_homebrew_refs_use_pinned_sha(self):
         wf = load_workflow(TEST_WORKFLOW)
@@ -597,16 +627,22 @@ class TestTestWorkflow(unittest.TestCase):
         self.assertIn("macos-latest", text)
 
     def test_formula_tests_verify_bottle_without_pypi(self):
+        wf = load_workflow(TEST_WORKFLOW)
         text = TEST_WORKFLOW.read_text()
         self.assertIn("workflow_dispatch:", text)
         self.assertIn("macos-15-intel", text)
         self.assertIn("files.pythonhosted.org", text)
         self.assertIn("brew install --verbose hellices/korvid/korvid", text)
-        # Once bottles are published under their single-dash remote filename,
-        # Homebrew reports a single-dash basename ("Pouring korvid-<version>...").
-        # The pour assertion must match a stable prefix and must NOT assume the
-        # double-dash local_filename, which would never appear.
-        self.assertIn("Pouring korvid", text)
+        steps = wf["jobs"]["test-bottle"]["steps"]
+        check_run = next(step["run"] for step in steps if step.get("id") == "bottle_check")
+        verify_run = next(
+            step["run"]
+            for step in steps
+            if step.get("name") == "Verify bottle was poured"
+        )
+        self.assertIn("filename=$bottle_filename", check_run)
+        self.assertIn("steps.bottle_check.outputs.filename", verify_run)
+        self.assertIn("Pouring ", verify_run)
         self.assertNotIn("Pouring korvid--", text)
 
     def test_bottle_tag_resolver_fails_on_malformed_schema(self):
