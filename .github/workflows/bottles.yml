@@ -67,8 +67,14 @@ jobs:
           # cannot restore them without violating the immutability policy.
           RELEASE_HAS_ASSETS="false"
           if [ "$FORMULA_HAS_BOTTLES" = "true" ]; then
-            RELEASE_ASSETS=$(gh release view "$RELEASE_TAG" --json assets 2>/dev/null \
-              | python3 -c "
+            release_error=$(mktemp)
+            if ! release_json=$(gh release view "$RELEASE_TAG" --json assets 2>"$release_error"); then
+              cat "$release_error" >&2
+              rm -f "$release_error"
+              exit 1
+            fi
+            rm -f "$release_error"
+            RELEASE_ASSETS=$(python3 -c "
           import json, sys
           version = sys.argv[1]
           assets = json.load(sys.stdin).get('assets', [])
@@ -80,7 +86,7 @@ jobs:
               f'korvid--{version}.sequoia.bottle.json',
           }
           print('true' if expected <= names else 'false')
-          " "$VERSION" || echo "false")
+          " "$VERSION" <<< "$release_json")
             RELEASE_HAS_ASSETS="$RELEASE_ASSETS"
           fi
 
@@ -220,10 +226,21 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Determine whether a release exists and its state
-          RELEASE_STATE=$(gh release view "$RELEASE_TAG" --json isDraft,tagName 2>/dev/null \
-            | python3 -c "import json,sys; d=json.load(sys.stdin); print('draft' if d['isDraft'] else 'published')" \
-            || echo "absent")
+          # Only GitHub's explicit not-found response means no release. Network,
+          # authentication, and rate-limit failures must remain visible.
+          release_error=$(mktemp)
+          if release_json=$(gh release view "$RELEASE_TAG" --json isDraft,tagName 2>"$release_error"); then
+            RELEASE_STATE=$(python3 -c \
+              "import json,sys; d=json.load(sys.stdin); print('draft' if d['isDraft'] else 'published')" \
+              <<< "$release_json")
+          elif grep -Fxq "release not found" "$release_error"; then
+            RELEASE_STATE="absent"
+          else
+            cat "$release_error" >&2
+            rm -f "$release_error"
+            exit 1
+          fi
+          rm -f "$release_error"
 
           echo "Release state: $RELEASE_STATE"
 

@@ -350,6 +350,21 @@ class TestBottlesWorkflow(unittest.TestCase):
         )
         formula_done_idx = prepare_text.index("should_build=false")
         self.assertIn("exit 1", prepare_text[incomplete_idx:formula_done_idx])
+        self.assertNotIn("2>/dev/null", prepare_text)
+        self.assertIn("cat \"$release_error\"", prepare_text)
+
+    def test_release_lookup_only_treats_not_found_as_absent(self):
+        wf = load_workflow(BOTTLES_WORKFLOW)
+        publish_run = next(
+            step["run"]
+            for step in wf["jobs"]["publish"]["steps"]
+            if step.get("name") == "Determine release state and validate/publish"
+        )
+
+        self.assertIn("release not found", publish_run)
+        self.assertIn("cat \"$release_error\"", publish_run)
+        self.assertNotIn('|| echo "absent"', publish_run)
+        self.assertNotIn("2>/dev/null", publish_run)
 
     # ------------------------------------------------------------------ #
     # Final-review contract tests: observable uploads + completeness check #
@@ -770,6 +785,18 @@ class TestTestWorkflow(unittest.TestCase):
             or "f'arm64_{base}'" in run or 'f"arm64_{base}"' in run,
             "Resolver must compute arm64 tag as 'arm64_' + base (e.g. arm64_sequoia)",
         )
+
+    def test_bottle_tag_resolver_fails_on_unknown_macos_major(self):
+        wf = load_workflow(TEST_WORKFLOW)
+        bottle_check = next(
+            step
+            for step in wf["jobs"]["test-bottle"]["steps"]
+            if step.get("id") == "bottle_check"
+        )
+        run = bottle_check["run"]
+
+        self.assertIn("if major not in tag_map", run)
+        self.assertIn("sys.exit(1)", run[run.index("if major not in tag_map") :])
 
 
 class TestSuiteHygiene(unittest.TestCase):
