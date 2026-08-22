@@ -213,6 +213,34 @@ class ValidateBottleArtifactsTests(_FixtureBase):
         with self.assertRaisesRegex(ValueError, "plain filename"):
             validate_artifacts(self.root, VERSION, ROOT_URL, {tag})
 
+    def test_rejects_dot_path_segment_as_filename(self) -> None:
+        tag = "arm64_sequoia"
+        archive = self._archive(_local_name(tag), b"arm64 bottle contents")
+        payload = self._payload(
+            tag,
+            local_filename=_local_name(tag),
+            filename=".",
+            sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),
+        )
+        self._write_json(_json_name(tag), payload)
+
+        with self.assertRaisesRegex(ValueError, "plain filename"):
+            validate_artifacts(self.root, VERSION, ROOT_URL, {tag})
+
+    def test_rejects_parent_path_segment_as_local_filename(self) -> None:
+        tag = "arm64_sequoia"
+        archive = self._archive(_local_name(tag), b"arm64 bottle contents")
+        payload = self._payload(
+            tag,
+            local_filename="..",
+            filename=_remote_name(tag),
+            sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),
+        )
+        self._write_json(_json_name(tag), payload)
+
+        with self.assertRaisesRegex(ValueError, "plain filename"):
+            validate_artifacts(self.root, VERSION, ROOT_URL, {tag})
+
     def test_rejects_filename_local_filename_mismatch(self) -> None:
         tag = "arm64_sequoia"
         archive = self._archive(_local_name(tag), b"arm64 bottle contents")

@@ -70,12 +70,17 @@ jobs:
             RELEASE_ASSETS=$(gh release view "$RELEASE_TAG" --json assets 2>/dev/null \
               | python3 -c "
           import json, sys
+          version = sys.argv[1]
           assets = json.load(sys.stdin).get('assets', [])
-          names = [a['name'] for a in assets]
-          has_arm = any('arm64_sequoia' in n and '.bottle.tar.gz' in n for n in names)
-          has_intel = any('sequoia' in n and 'arm64' not in n and '.bottle.tar.gz' in n for n in names)
-          print('true' if has_arm and has_intel else 'false')
-          " || echo "false")
+          names = {a['name'] for a in assets}
+          expected = {
+              f'korvid-{version}.arm64_sequoia.bottle.tar.gz',
+              f'korvid-{version}.sequoia.bottle.tar.gz',
+              f'korvid--{version}.arm64_sequoia.bottle.json',
+              f'korvid--{version}.sequoia.bottle.json',
+          }
+          print('true' if expected <= names else 'false')
+          " "$VERSION" || echo "false")
             RELEASE_HAS_ASSETS="$RELEASE_ASSETS"
           fi
 

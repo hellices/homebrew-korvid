@@ -18,7 +18,11 @@ def _sha256(path: Path) -> str:
 
 
 def _is_plain_filename(name: object) -> bool:
-    return isinstance(name, str) and name != "" and Path(name).name == name
+    return (
+        isinstance(name, str)
+        and name not in {"", ".", ".."}
+        and Path(name).name == name
+    )
 
 
 def _expected_remote_filename(local_filename: str) -> str:

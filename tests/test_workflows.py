@@ -286,11 +286,10 @@ class TestBottlesWorkflow(unittest.TestCase):
 
     def test_should_build_also_checks_release_assets(self):
         """should_build must also query the GitHub Release to check whether
-        bottle assets are present, not just inspect the formula metadata.
+        every bottle archive and JSON sidecar is present, not just inspect the
+        formula metadata.
         A workflow_dispatch recovery with missing release assets must
         not be silently skipped."""
-        text = BOTTLES_WORKFLOW.read_text()
-        # The prepare job must call gh release to inspect assets
         wf = load_workflow(BOTTLES_WORKFLOW)
         prepare_steps = wf["jobs"]["prepare"]["steps"]
         prepare_text = "".join(s.get("run", "") for s in prepare_steps)
@@ -301,6 +300,18 @@ class TestBottlesWorkflow(unittest.TestCase):
             "are already present before setting should_build=false; a "
             "workflow_dispatch recovery with deleted assets must re-trigger builds",
         )
+        for expected in (
+            "arm64_sequoia.bottle.tar.gz",
+            "sequoia.bottle.tar.gz",
+            "arm64_sequoia.bottle.json",
+            "sequoia.bottle.json",
+        ):
+            self.assertIn(
+                expected,
+                prepare_text,
+                f"prepare must require release asset {expected!r} before "
+                "setting should_build=false",
+            )
 
     # ------------------------------------------------------------------ #
     # Final-review contract tests: observable uploads + completeness check #
@@ -560,6 +571,25 @@ class TestBottlesWorkflow(unittest.TestCase):
 
 
 class TestTestWorkflow(unittest.TestCase):
+    PINNED_SETUP_HOMEBREW_SHA = "a657b8b0cd35d0f65cce41fce9b24cf054b49869"
+
+    def test_setup_homebrew_refs_use_pinned_sha(self):
+        wf = load_workflow(TEST_WORKFLOW)
+        refs = [
+            step["uses"]
+            for job in wf["jobs"].values()
+            for step in job.get("steps", [])
+            if "setup-homebrew" in (step.get("uses") or "")
+        ]
+
+        self.assertTrue(refs, "test workflow must set up Homebrew")
+        for ref in refs:
+            self.assertEqual(
+                ref,
+                "Homebrew/actions/setup-homebrew@"
+                + self.PINNED_SETUP_HOMEBREW_SHA,
+            )
+
     def test_formula_tests_preserve_source_fallback(self):
         text = TEST_WORKFLOW.read_text()
         self.assertIn("brew install --build-from-source", text)
