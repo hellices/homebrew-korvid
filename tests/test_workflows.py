@@ -251,6 +251,16 @@ class TestBottlesWorkflow(unittest.TestCase):
             "(use 'git diff --cached --quiet' or equivalent)",
         )
 
+    def test_existing_pr_lookup_emits_empty_for_no_match(self):
+        wf = load_workflow(BOTTLES_WORKFLOW)
+        pr_step = next(
+            step
+            for step in wf["jobs"]["publish"]["steps"]
+            if step.get("name") == "Open pull request if none exists"
+        )
+
+        self.assertIn(".[0].number // empty", pr_step["run"])
+
     def test_build_concurrency_includes_matrix_tag(self):
         """Build job concurrency group must include the matrix tag so both
         architecture legs can run in parallel (not serially blocked by each other)."""

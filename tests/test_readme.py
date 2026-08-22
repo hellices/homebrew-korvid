@@ -73,6 +73,15 @@ class ReadmePreflightExtractionMixin(unittest.TestCase):
 
 
 class ReadmeAirgapPreflightTests(ReadmePreflightExtractionMixin):
+    def test_normal_installation_claim_depends_on_formula_bottle_metadata(self) -> None:
+        section = self.text.split(
+            "### Normal restricted-network behavior", 1
+        )[1].split("### Prefetch on a matching connected Mac", 1)[0]
+
+        self.assertIn("When the formula lists a bottle", section)
+        self.assertIn("falls back to a source build", section)
+        self.assertIn("PyPI", section)
+
     def test_explicit_schema_tag_preflight_precedes_fetch(self) -> None:
         """`brew fetch --force-bottle` does not fail when no bottle exists, so
         the README must run an explicit `brew info --json=v2` schema/tag

@@ -27,11 +27,12 @@ uv tool install 'korvid[mcp]'
 
 ### Normal restricted-network behavior
 
-On macOS 15 (Apple Silicon and Intel), `brew install hellices/korvid/korvid`
-downloads a pre-built Korvid bottle from GitHub Releases and does **not**
-contact PyPI or `files.pythonhosted.org`. Homebrew's own dependency bottles
-are also fetched from GitHub; no other external network paths are required
-provided those two domains are reachable.
+When the formula lists a bottle for the host's macOS 15 tag (Apple Silicon or
+Intel), `brew install hellices/korvid/korvid` downloads that pre-built bottle
+from GitHub Releases and does **not** contact PyPI or
+`files.pythonhosted.org`. If matching bottle metadata has not been merged yet,
+Homebrew falls back to a source build, which requires PyPI. Homebrew's own
+dependency bottles are also fetched from GitHub.
 
 ### Prefetch on a matching connected Mac
 

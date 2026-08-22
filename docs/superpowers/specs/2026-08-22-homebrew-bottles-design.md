@@ -94,8 +94,9 @@ partial build. It:
 
 The workflow never merges or enables auto-merge.
 
-A per-version concurrency group allows a rerun to replace an older in-progress
-run, while builds for different formula versions remain independent.
+Per-version concurrency groups queue reruns instead of cancelling in-progress
+build or publish jobs, so two runs cannot race on the same release. Builds for
+different formula versions remain independent.
 
 ### Formula generation lifecycle
 
