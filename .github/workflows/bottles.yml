@@ -389,9 +389,9 @@ jobs:
           if git diff --cached --quiet; then
             echo "No changes to Formula/korvid.rb; skipping commit."
           else
-            git commit -m "bottles: add bottles for korvid $VERSION
-
-          Co-authored-by: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+            git commit \
+              -m "bottles: add bottles for korvid $VERSION" \
+              -m "Co-authored-by: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
           fi
 
           git push --force-with-lease origin "$BRANCH"
@@ -401,7 +401,7 @@ jobs:
           set -euo pipefail
           BRANCH="bottles-korvid-${VERSION}"
 
-          EXISTING_PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty' || true)
+          EXISTING_PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
           if [ -z "$EXISTING_PR" ]; then
             gh pr create \
               --head "$BRANCH" \

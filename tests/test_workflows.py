@@ -251,6 +251,19 @@ class TestBottlesWorkflow(unittest.TestCase):
             "(use 'git diff --cached --quiet' or equivalent)",
         )
 
+    def test_generated_commit_uses_separate_trailer_message(self):
+        wf = load_workflow(BOTTLES_WORKFLOW)
+        commit_step = next(
+            step
+            for step in wf["jobs"]["publish"]["steps"]
+            if step.get("name") == "Commit and push bottle branch"
+        )
+
+        self.assertIn(
+            '-m "Co-authored-by: github-actions[bot]',
+            commit_step["run"],
+        )
+
     def test_existing_pr_lookup_emits_empty_for_no_match(self):
         wf = load_workflow(BOTTLES_WORKFLOW)
         pr_step = next(
@@ -260,6 +273,19 @@ class TestBottlesWorkflow(unittest.TestCase):
         )
 
         self.assertIn(".[0].number // empty", pr_step["run"])
+
+    def test_existing_pr_lookup_propagates_gh_failures(self):
+        wf = load_workflow(BOTTLES_WORKFLOW)
+        pr_step = next(
+            step
+            for step in wf["jobs"]["publish"]["steps"]
+            if step.get("name") == "Open pull request if none exists"
+        )
+        lookup = next(
+            line for line in pr_step["run"].splitlines() if "gh pr list" in line
+        )
+
+        self.assertNotIn("|| true", lookup)
 
     def test_build_concurrency_includes_matrix_tag(self):
         """Build job concurrency group must include the matrix tag so both
