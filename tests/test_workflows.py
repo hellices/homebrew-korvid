@@ -726,6 +726,21 @@ class TestTestWorkflow(unittest.TestCase):
                 + self.PINNED_SETUP_HOMEBREW_SHA,
             )
 
+    def test_tap_setup_replaces_existing_path(self):
+        wf = load_workflow(TEST_WORKFLOW)
+        tap_steps = [
+            step
+            for job in wf["jobs"].values()
+            for step in job.get("steps", [])
+            if step.get("name") == "Tap this checkout"
+        ]
+
+        self.assertTrue(tap_steps)
+        for step in tap_steps:
+            run = step["run"]
+            self.assertIn('rm -rf -- "$tap"', run)
+            self.assertLess(run.index('rm -rf -- "$tap"'), run.index("ln -s"))
+
     def test_formula_tests_preserve_source_fallback(self):
         text = TEST_WORKFLOW.read_text()
         self.assertIn("brew install --build-from-source", text)
@@ -879,6 +894,19 @@ class TestTestWorkflow(unittest.TestCase):
 
         self.assertIn("if major not in tag_map", run)
         self.assertIn("sys.exit(1)", run[run.index("if major not in tag_map") :])
+
+    def test_bottle_tag_resolver_fails_on_unknown_architecture(self):
+        wf = load_workflow(TEST_WORKFLOW)
+        bottle_check = next(
+            step
+            for step in wf["jobs"]["test-bottle"]["steps"]
+            if step.get("id") == "bottle_check"
+        )
+        run = bottle_check["run"]
+
+        self.assertIn("if arch not in {'arm64', 'x86_64'}", run)
+        arch_guard = run.index("if arch not in {'arm64', 'x86_64'}")
+        self.assertIn("sys.exit(1)", run[arch_guard:])
 
 
 class TestSuiteHygiene(unittest.TestCase):

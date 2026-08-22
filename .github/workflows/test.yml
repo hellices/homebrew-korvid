@@ -35,6 +35,7 @@ jobs:
         run: |
           tap="$(brew --repository)/Library/Taps/hellices/homebrew-korvid"
           mkdir -p "$(dirname "$tap")"
+          rm -rf -- "$tap"
           ln -s "$GITHUB_WORKSPACE" "$tap"
           brew tap-info hellices/korvid
 
@@ -81,6 +82,7 @@ jobs:
         run: |
           tap="$(brew --repository)/Library/Taps/hellices/homebrew-korvid"
           mkdir -p "$(dirname "$tap")"
+          rm -rf -- "$tap"
           ln -s "$GITHUB_WORKSPACE" "$tap"
           brew tap-info hellices/korvid
 
@@ -146,6 +148,9 @@ jobs:
           # Schema is structurally valid; check whether this runner has a bottle.
           # Homebrew tags: arm64 -> arm64_<base>, x86_64 -> <base>
           arch = platform.machine()
+          if arch not in {'arm64', 'x86_64'}:
+              print(f'UNSUPPORTED_RUNNER: architecture {arch} has no bottle tag mapping', file=sys.stderr)
+              sys.exit(1)
           os_ver = subprocess.check_output(['sw_vers', '-productVersion'], text=True).strip()
           major = os_ver.split('.')[0]
           tag_map = {'15': 'sequoia', '14': 'sonoma', '13': 'ventura'}
