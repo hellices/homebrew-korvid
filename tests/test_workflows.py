@@ -105,11 +105,10 @@ class TestBottlesWorkflow(unittest.TestCase):
         # The unsafe pattern must not be present
         self.assertNotIn("'$RELEASE_TAG'", text)
 
-    def test_checkout_persist_credentials_scoped_by_job(self):
+    def test_checkout_credentials_are_disabled_in_every_job(self):
         """actions/checkout persists the job's GITHUB_TOKEN in the workspace git
-        config by default. `prepare` and `build` never push, so they must disable
-        it. The publish job's setup-homebrew step replaces the checkout's .git,
-        so it must receive the token itself to persist git authentication."""
+        config by default. Every checkout must disable it; publish receives its
+        push credential from setup-homebrew after that action replaces .git."""
         wf = load_workflow(BOTTLES_WORKFLOW)
         jobs = wf["jobs"]
 
@@ -124,14 +123,13 @@ class TestBottlesWorkflow(unittest.TestCase):
             )
             return step
 
-        for job_name in ("prepare", "build"):
+        for job_name in ("prepare", "build", "publish"):
             with_block = checkout_step(job_name).get("with") or {}
             self.assertIn(
                 "persist-credentials",
                 with_block,
                 f"{job_name} checkout must set persist-credentials: false "
-                "(it never pushes; leave no usable token in the workspace git "
-                "config)",
+                "so checkout leaves no usable token in the workspace git config",
             )
             self.assertIs(
                 with_block["persist-credentials"],
