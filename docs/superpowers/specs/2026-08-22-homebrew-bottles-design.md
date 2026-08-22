@@ -57,8 +57,9 @@ A matrix runs on `macos-15` and `macos-15-intel`. Each job:
 4. Runs strict audit.
 5. Installs the formula with `--build-bottle`.
 6. Runs `brew test` and checks `korvid --version`.
-7. Runs `brew bottle --json` with the versioned GitHub Release URL as
-   `root_url`.
+7. Runs `brew bottle --json --no-rebuild` with the versioned GitHub Release URL
+   as `root_url`. Post-merge bottling otherwise increments the rebuild number
+   because `origin/HEAD` already contains the same formula version.
 8. Uploads the bottle archive and JSON metadata as workflow artifacts.
 
 The bottle root URL uses a tap release tag derived from the formula version,

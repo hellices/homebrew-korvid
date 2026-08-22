@@ -271,7 +271,7 @@ def test_bottle_workflow_builds_both_macos_architectures(self):
     self.assertIn("macos-15", text)
     self.assertIn("macos-15-intel", text)
     self.assertIn("brew install --build-bottle", text)
-    self.assertIn("brew bottle --json", text)
+    self.assertIn("brew bottle --json --no-rebuild", text)
 
 def test_bottle_workflow_validates_before_publishing(self):
     text = BOTTLES_WORKFLOW.read_text()
@@ -328,7 +328,7 @@ brew audit --strict hellices/korvid/korvid
 brew install --build-bottle --verbose hellices/korvid/korvid
 brew test hellices/korvid/korvid
 korvid --version
-brew bottle --json --root-url="$ROOT_URL" hellices/korvid/korvid
+brew bottle --json --no-rebuild --root-url="$ROOT_URL" hellices/korvid/korvid
 ```
 
 Assert the generated JSON contains the matrix tag before uploading the archive

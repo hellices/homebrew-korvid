@@ -144,7 +144,7 @@ jobs:
           ROOT_URL: ${{ needs.prepare.outputs.root_url }}
         run: |
           set -euo pipefail
-          brew bottle --json --root-url="$ROOT_URL" hellices/korvid/korvid
+          brew bottle --json --no-rebuild --root-url="$ROOT_URL" hellices/korvid/korvid
 
       - name: Verify bottle tag matches matrix
         env:

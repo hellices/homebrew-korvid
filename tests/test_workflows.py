@@ -59,6 +59,19 @@ class TestBottlesWorkflow(unittest.TestCase):
         self.assertIn("brew install --build-bottle", text)
         self.assertIn("brew bottle --json", text)
 
+    def test_bottle_build_disables_rebuild_suffix(self):
+        """Post-merge bottling sees the same version at origin/HEAD, so Homebrew
+        otherwise emits rebuild 1 filenames that the release contract does not
+        use."""
+        wf = load_workflow(BOTTLES_WORKFLOW)
+        build_step = next(
+            step
+            for step in wf["jobs"]["build"]["steps"]
+            if step.get("name") == "Build bottle"
+        )
+
+        self.assertIn("--no-rebuild", build_step["run"])
+
     def test_bottle_workflow_validates_before_publishing(self):
         text = BOTTLES_WORKFLOW.read_text()
         self.assertLess(
