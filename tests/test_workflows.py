@@ -784,8 +784,23 @@ class TestTestWorkflow(unittest.TestCase):
         )
         self.assertNotIn("${{", verify_run)
         self.assertIn("$BOTTLE_FILENAME", verify_run)
+        self.assertIn('[ -n "$BOTTLE_FILENAME" ]', verify_run)
+        self.assertLess(
+            verify_run.index('[ -n "$BOTTLE_FILENAME" ]'),
+            verify_run.index("grep -F"),
+        )
         self.assertIn("Pouring ", verify_run)
         self.assertNotIn("Pouring korvid--", text)
+
+    def test_bottle_install_uses_strict_shell_mode(self):
+        wf = load_workflow(TEST_WORKFLOW)
+        install_step = next(
+            step
+            for step in wf["jobs"]["test-bottle"]["steps"]
+            if step.get("name") == "Install bottle"
+        )
+
+        self.assertIn("set -euo pipefail", install_step["run"])
 
     def test_bottle_tag_resolver_uses_metadata_url_filename(self):
         wf = load_workflow(TEST_WORKFLOW)

@@ -200,14 +200,20 @@ jobs:
         env:
           HOMEBREW_NO_AUTO_UPDATE: "1"
         run: |
-          set -o pipefail
+          set -euo pipefail
           brew install --verbose hellices/korvid/korvid 2>&1 | tee bottle-install.log
 
       - name: Verify bottle was poured
         if: steps.bottle_check.outputs.skip == 'false'
         env:
           BOTTLE_FILENAME: ${{ steps.bottle_check.outputs.filename }}
-        run: grep -F -- "Pouring $BOTTLE_FILENAME" bottle-install.log
+        run: |
+          set -euo pipefail
+          [ -n "$BOTTLE_FILENAME" ] || {
+            echo "Bottle resolver returned an empty filename." >&2
+            exit 1
+          }
+          grep -F -- "Pouring $BOTTLE_FILENAME" bottle-install.log
 
       - name: brew test
         if: steps.bottle_check.outputs.skip == 'false'
