@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
   # A formula can break without anyone touching it: a yanked sdist or a
   # withdrawn upstream release is only visible from an actual build.
   schedule:
@@ -20,12 +21,12 @@ jobs:
         os: [macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           persist-credentials: false
 
       - name: Set up Homebrew
-        uses: Homebrew/actions/setup-homebrew@master
+        uses: Homebrew/actions/setup-homebrew@a657b8b0cd35d0f65cce41fce9b24cf054b49869  # master
 
       # brew refuses `audit`/`install` by path; the formula has to be
       # reached through a tap. Tapping this checkout is what a user's
@@ -34,6 +35,7 @@ jobs:
         run: |
           tap="$(brew --repository)/Library/Taps/hellices/homebrew-korvid"
           mkdir -p "$(dirname "$tap")"
+          rm -rf -- "$tap"
           ln -s "$GITHUB_WORKSPACE" "$tap"
           brew tap-info hellices/korvid
 
@@ -60,4 +62,176 @@ jobs:
         run: brew test hellices/korvid/korvid
 
       - name: The installed command reports its version
+        run: korvid --version
+
+  test-bottle:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@a657b8b0cd35d0f65cce41fce9b24cf054b49869  # master
+
+      - name: Tap this checkout
+        run: |
+          tap="$(brew --repository)/Library/Taps/hellices/homebrew-korvid"
+          mkdir -p "$(dirname "$tap")"
+          rm -rf -- "$tap"
+          ln -s "$GITHUB_WORKSPACE" "$tap"
+          brew tap-info hellices/korvid
+
+      - name: Check for matching bottle
+        id: bottle_check
+        run: |
+          set -euo pipefail
+          info=$(brew info --json=v2 hellices/korvid/korvid)
+          bottle_filename=$(echo "$info" | python3 -c "
+          import json, sys, platform, subprocess
+          from urllib.parse import unquote, urlsplit
+
+          data = json.load(sys.stdin)
+
+          # Strict schema validation — any structural deviation is a hard error,
+          # not a silent skip.  Only a valid dict with the expected keys may produce
+          # an empty tag (meaning no bottle for this runner), which is the sole
+          # legitimate reason to set skip=true.
+          if not isinstance(data, dict) or 'formulae' not in data:
+              print('SCHEMA_ERROR: top-level response missing formulae key', file=sys.stderr)
+              sys.exit(1)
+          formulae = data['formulae']
+          if not isinstance(formulae, list) or len(formulae) == 0:
+              print('SCHEMA_ERROR: formulae is not a non-empty list', file=sys.stderr)
+              sys.exit(1)
+          formula = formulae[0]
+          if not isinstance(formula, dict):
+              print('SCHEMA_ERROR: formula entry is not a dict', file=sys.stderr)
+              sys.exit(1)
+          if 'bottle' not in formula:
+              print('SCHEMA_ERROR: formula entry missing bottle key', file=sys.stderr)
+              sys.exit(1)
+          bottle = formula['bottle']
+          if not isinstance(bottle, dict):
+              print('SCHEMA_ERROR: bottle is not a dict', file=sys.stderr)
+              sys.exit(1)
+          # bottle == {} is a legitimate source-only formula response; skip cleanly.
+          if not bottle:
+              print('')
+              sys.exit(0)
+          if 'stable' not in bottle:
+              print('SCHEMA_ERROR: bottle missing stable key', file=sys.stderr)
+              sys.exit(1)
+          stable = bottle['stable']
+          if not isinstance(stable, dict) or 'files' not in stable:
+              print('SCHEMA_ERROR: stable missing files key', file=sys.stderr)
+              sys.exit(1)
+          files = stable['files']
+          if not isinstance(files, dict):
+              print('SCHEMA_ERROR: stable.files is not a dict', file=sys.stderr)
+              sys.exit(1)
+          if 'versions' not in formula:
+              print('SCHEMA_ERROR: formula entry missing versions key', file=sys.stderr)
+              sys.exit(1)
+          versions = formula['versions']
+          if not isinstance(versions, dict):
+              print('SCHEMA_ERROR: versions is not a dict', file=sys.stderr)
+              sys.exit(1)
+          version = versions.get('stable')
+          if not isinstance(version, str) or not version:
+              print('SCHEMA_ERROR: versions.stable is not a non-empty string', file=sys.stderr)
+              sys.exit(1)
+
+          # Schema is structurally valid; check whether this runner has a bottle.
+          # Homebrew tags: arm64 -> arm64_<base>, x86_64 -> <base>
+          arch = platform.machine()
+          if arch not in {'arm64', 'x86_64'}:
+              print(f'UNSUPPORTED_RUNNER: architecture {arch} has no bottle tag mapping', file=sys.stderr)
+              sys.exit(1)
+          os_ver = subprocess.check_output(['sw_vers', '-productVersion'], text=True).strip()
+          major = os_ver.split('.')[0]
+          tag_map = {'15': 'sequoia', '14': 'sonoma', '13': 'ventura'}
+          if major not in tag_map:
+              print(f'UNSUPPORTED_RUNNER: macOS major {major} has no bottle tag mapping', file=sys.stderr)
+              sys.exit(1)
+          base = tag_map[major]
+          target = 'arm64_' + base if arch == 'arm64' else base
+          if target not in files:
+              print('')
+              sys.exit(0)
+          metadata = files[target]
+          if not isinstance(metadata, dict):
+              print('SCHEMA_ERROR: stable.files target is not a dict', file=sys.stderr)
+              sys.exit(1)
+          url = metadata.get('url')
+          if not isinstance(url, str) or not url:
+              print('SCHEMA_ERROR: stable.files target URL is missing', file=sys.stderr)
+              sys.exit(1)
+          filename = unquote(urlsplit(url).path).rsplit('/', 1)[-1]
+          if not filename.endswith('.bottle.tar.gz') or any(c in filename for c in '\r\n'):
+              print('SCHEMA_ERROR: stable.files target URL has no bottle filename', file=sys.stderr)
+              sys.exit(1)
+          print(filename)
+          ")
+          if [ -z "$bottle_filename" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "filename=$bottle_filename" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Remove cached Korvid archive
+        if: steps.bottle_check.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          downloads="$(brew --cache)/downloads"
+          mkdir -p "$downloads"
+          find "$downloads" -mindepth 1 -maxdepth 1 -iname "*korvid*" \
+            -exec rm -rf -- {} +
+          if find "$downloads" -mindepth 1 -maxdepth 1 -iname "*korvid*" -print -quit | grep -q .; then
+            echo "Korvid archives remain in the Homebrew download cache." >&2
+            exit 1
+          fi
+
+      - name: Block files.pythonhosted.org
+        if: steps.bottle_check.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          printf '%s\n' \
+            "127.0.0.1 files.pythonhosted.org" \
+            "::1 files.pythonhosted.org" \
+            | sudo tee -a /etc/hosts >/dev/null
+          grep -Fxq "127.0.0.1 files.pythonhosted.org" /etc/hosts
+          grep -Fxq "::1 files.pythonhosted.org" /etc/hosts
+
+      - name: Install bottle
+        if: steps.bottle_check.outputs.skip == 'false'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          set -euo pipefail
+          brew install --verbose hellices/korvid/korvid 2>&1 | tee bottle-install.log
+
+      - name: Verify bottle was poured
+        if: steps.bottle_check.outputs.skip == 'false'
+        env:
+          BOTTLE_FILENAME: ${{ steps.bottle_check.outputs.filename }}
+        run: |
+          set -euo pipefail
+          [ -n "$BOTTLE_FILENAME" ] || {
+            echo "Bottle resolver returned an empty filename." >&2
+            exit 1
+          }
+          grep -F -- "Pouring $BOTTLE_FILENAME" bottle-install.log
+
+      - name: brew test
+        if: steps.bottle_check.outputs.skip == 'false'
+        run: brew test hellices/korvid/korvid
+
+      - name: The installed command reports its version
+        if: steps.bottle_check.outputs.skip == 'false'
         run: korvid --version
