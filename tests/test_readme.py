@@ -55,6 +55,12 @@ class ReadmePreflightExtractionMixin(unittest.TestCase):
         )
         return match.group(1)
 
+    def _disconnected_host_block(self) -> str:
+        for block in re.findall(r"```bash\n(.*?)\n```", self.text, re.DOTALL):
+            if "HOMEBREW_NO_AUTO_UPDATE" in block and "cp -R" in block:
+                return block
+        self.fail("disconnected-host bash block (tap copy + install) not found")
+
     def _run_preflight(self, info: str, tag: str) -> subprocess.CompletedProcess:
         """Run the documented preflight Python, feeding JSON and the expected tag
         through the documented environment-variable channel (never through
@@ -200,6 +206,16 @@ class ReadmePreflightStructureTests(ReadmePreflightExtractionMixin):
         )
         self.assertIn(INFO_ENV, src, f"preflight must read {INFO_ENV} from the env")
         self.assertIn(TAG_ENV, src, f"preflight must read {TAG_ENV} from the env")
+
+    def test_disconnected_install_replaces_existing_tap(self) -> None:
+        block = self._disconnected_host_block()
+        cleanup = 'rm -rf -- "$tap"'
+        copy = 'cp -R /path/from-transfer/homebrew-korvid "$tap"'
+
+        self.assertEqual(block.splitlines()[0], "set -euo pipefail")
+        self.assertIn(cleanup, block)
+        self.assertIn(copy, block)
+        self.assertLess(block.index(cleanup), block.index(copy))
 
 
 class ReadmePreflightBehaviorTests(ReadmePreflightExtractionMixin):

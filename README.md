@@ -115,8 +115,11 @@ On the target host, place the tap checkout where Homebrew expects it and
 point the installer at the pre-populated cache:
 
 ```bash
+set -euo pipefail
+
 tap="$(brew --repository)/Library/Taps/hellices/homebrew-korvid"
 mkdir -p "$(dirname "$tap")"
+rm -rf -- "$tap"
 cp -R /path/from-transfer/homebrew-korvid "$tap"
 
 HOMEBREW_NO_AUTO_UPDATE=1 \
