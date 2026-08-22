@@ -89,6 +89,7 @@ jobs:
       - name: Check for matching bottle
         id: bottle_check
         run: |
+          set -euo pipefail
           info=$(brew info --json=v2 hellices/korvid/korvid)
           bottle_filename=$(echo "$info" | python3 -c "
           import json, sys, platform, subprocess

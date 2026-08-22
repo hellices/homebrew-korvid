@@ -802,6 +802,18 @@ class TestTestWorkflow(unittest.TestCase):
 
         self.assertIn("set -euo pipefail", install_step["run"])
 
+    def test_bottle_tag_resolver_uses_strict_shell_mode(self):
+        wf = load_workflow(TEST_WORKFLOW)
+        bottle_check = next(
+            step
+            for step in wf["jobs"]["test-bottle"]["steps"]
+            if step.get("id") == "bottle_check"
+        )
+
+        self.assertTrue(
+            bottle_check["run"].lstrip().startswith("set -euo pipefail")
+        )
+
     def test_bottle_tag_resolver_uses_metadata_url_filename(self):
         wf = load_workflow(TEST_WORKFLOW)
         bottle_check = next(

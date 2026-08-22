@@ -77,7 +77,12 @@ def _collect_artifacts(
             raise ValueError(f"{json_path}: top-level JSON must be an object")
         if len(payload) != 1:
             raise ValueError(f"{json_path}: expected exactly one formula")
-        entry = next(iter(payload.values()))
+        formula_key = "hellices/korvid/korvid"
+        if formula_key not in payload:
+            raise ValueError(
+                f"{json_path}: expected formula key {formula_key!r}"
+            )
+        entry = payload[formula_key]
         if not isinstance(entry, dict):
             raise ValueError(f"{json_path}: formula entry must be an object")
         formula = entry.get("formula", {})

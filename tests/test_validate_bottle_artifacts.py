@@ -110,6 +110,21 @@ class _FixtureBase(unittest.TestCase):
 
 
 class ValidateBottleArtifactsTests(_FixtureBase):
+    def test_rejects_unexpected_formula_key(self) -> None:
+        tag = "arm64_sequoia"
+        archive = self._archive(_local_name(tag), b"arm64 bottle contents")
+        payload = self._payload(
+            tag,
+            local_filename=_local_name(tag),
+            filename=_remote_name(tag),
+            sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),
+        )
+        payload["other/tap/korvid"] = payload.pop("hellices/korvid/korvid")
+        self._write_json(_json_name(tag), payload)
+
+        with self.assertRaisesRegex(ValueError, "formula key"):
+            validate_artifacts(self.root, VERSION, ROOT_URL, {tag})
+
     def test_rejects_non_mapping_metadata_shapes(self) -> None:
         tag = "arm64_sequoia"
         valid = self._payload(
