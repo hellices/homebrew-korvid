@@ -129,12 +129,12 @@ def _collect_artifacts(
         # Exactly one archive must be present, named by *either* the build-time
         # local_filename or the published remote filename -- never both, which
         # would make the checksum target ambiguous.
+        expected_archive_names = {local_filename, filename}
         present = sorted(
             {
                 path
-                for name in {local_filename, filename}
-                for path in root.rglob(name)
-                if included(path)
+                for path in root.rglob("*.bottle.tar.gz")
+                if path.name in expected_archive_names and included(path)
             }
         )
         if not present:
@@ -204,8 +204,11 @@ def stage_release_assets(
     )
 
     stage_dir.mkdir(parents=True, exist_ok=True)
-    for stale in (*stage_dir.glob("*.bottle.tar.gz"), *stage_dir.glob("*.bottle.json")):
-        stale.unlink()
+    for stale in stage_dir.rglob("*"):
+        if stale.is_file() and stale.name.endswith(
+            (".bottle.tar.gz", ".bottle.json")
+        ):
+            stale.unlink()
 
     staged: list[Path] = []
     for artifact in artifacts:

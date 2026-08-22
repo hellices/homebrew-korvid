@@ -326,6 +326,24 @@ class ValidateBottleArtifactsTests(_FixtureBase):
         with self.assertRaisesRegex(ValueError, "ambiguous"):
             validate_artifacts(self.root, VERSION, ROOT_URL, {tag})
 
+    def test_treats_metadata_filenames_as_literal_names(self) -> None:
+        tag = "arm64_sequoia"
+        archive = self._archive(_local_name(tag), b"arm64 bottle contents")
+        local_filename = f"korvid--{VERSION}.*.bottle.tar.gz"
+        filename = f"korvid-{VERSION}.*.bottle.tar.gz"
+        self._write_json(
+            f"korvid--{VERSION}.*.bottle.json",
+            self._payload(
+                tag,
+                local_filename=local_filename,
+                filename=filename,
+                sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),
+            ),
+        )
+
+        with self.assertRaisesRegex(ValueError, "no archive found"):
+            validate_artifacts(self.root, VERSION, ROOT_URL, {tag})
+
     def test_rejects_unexpected_json_sidecar_name(self) -> None:
         tag = "arm64_sequoia"
         archive = self._archive(_local_name(tag), b"arm64 bottle contents")
@@ -392,6 +410,21 @@ class StageReleaseAssetsTests(_FixtureBase):
         )
 
         self.assertEqual({path.name for path in first}, {path.name for path in second})
+
+    def test_staging_removes_nested_stale_bottle_assets(self) -> None:
+        self._write_local_fixture()
+        stage_dir = self.root / "staged"
+        stale_dir = stage_dir / "previous"
+        stale_dir.mkdir(parents=True)
+        stale_archive = stale_dir / "stale.bottle.tar.gz"
+        stale_json = stale_dir / "stale.bottle.json"
+        stale_archive.write_bytes(b"stale")
+        stale_json.write_text("{}", encoding="utf-8")
+
+        stage_release_assets(self.root, VERSION, ROOT_URL, TAGS, stage_dir)
+
+        self.assertFalse(stale_archive.exists())
+        self.assertFalse(stale_json.exists())
 
     def test_staging_rejects_artifact_root_as_destination(self) -> None:
         self._write_local_fixture()

@@ -326,20 +326,19 @@ class TestBottlesWorkflow(unittest.TestCase):
             run,
         )
 
-    def test_prepare_calls_brew_info_at_most_once(self):
-        """brew info --json=v2 must be called at most once in the prepare job
-        (capture output and reuse instead of three separate calls)."""
+    def test_prepare_calls_brew_info_exactly_once(self):
+        """brew info --json=v2 must be captured once and reused in prepare."""
         wf = load_workflow(BOTTLES_WORKFLOW)
         prepare_steps = wf["jobs"]["prepare"]["steps"]
         brew_info_calls = sum(
             (s.get("run") or "").count("brew info --json=v2")
             for s in prepare_steps
         )
-        self.assertLessEqual(
+        self.assertEqual(
             brew_info_calls,
             1,
-            f"brew info --json=v2 is called {brew_info_calls} times in prepare; "
-            "capture once and reuse to avoid redundant calls",
+            "prepare must call brew info --json=v2 exactly once, capture it, "
+            f"and reuse it; got {brew_info_calls} calls",
         )
 
     def test_prepare_sets_up_homebrew(self):
