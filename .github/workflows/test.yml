@@ -181,7 +181,9 @@ jobs:
 
       - name: Verify bottle was poured
         if: steps.bottle_check.outputs.skip == 'false'
-        run: grep -F "Pouring ${{ steps.bottle_check.outputs.filename }}" bottle-install.log
+        env:
+          BOTTLE_FILENAME: ${{ steps.bottle_check.outputs.filename }}
+        run: grep -F -- "Pouring $BOTTLE_FILENAME" bottle-install.log
 
       - name: brew test
         if: steps.bottle_check.outputs.skip == 'false'

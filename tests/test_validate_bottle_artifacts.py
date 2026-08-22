@@ -276,6 +276,22 @@ class ValidateBottleArtifactsTests(_FixtureBase):
         with self.assertRaisesRegex(ValueError, "ambiguous"):
             validate_artifacts(self.root, VERSION, ROOT_URL, {tag})
 
+    def test_rejects_unexpected_json_sidecar_name(self) -> None:
+        tag = "arm64_sequoia"
+        archive = self._archive(_local_name(tag), b"arm64 bottle contents")
+        self._write_json(
+            "unexpected.bottle.json",
+            self._payload(
+                tag,
+                local_filename=_local_name(tag),
+                filename=_remote_name(tag),
+                sha256=hashlib.sha256(archive.read_bytes()).hexdigest(),
+            ),
+        )
+
+        with self.assertRaisesRegex(ValueError, "JSON sidecar"):
+            validate_artifacts(self.root, VERSION, ROOT_URL, {tag})
+
 
 class StageReleaseAssetsTests(_FixtureBase):
     def test_stages_remote_named_assets(self) -> None:
@@ -313,6 +329,27 @@ class StageReleaseAssetsTests(_FixtureBase):
 
         with self.assertRaisesRegex(ValueError, "checksum"):
             stage_release_assets(self.root, VERSION, ROOT_URL, TAGS, stage_dir)
+
+    def test_staging_is_idempotent_when_directory_is_under_root(self) -> None:
+        self._write_local_fixture()
+        stage_dir = self.root / "staged"
+
+        first = stage_release_assets(
+            self.root, VERSION, ROOT_URL, TAGS, stage_dir
+        )
+        second = stage_release_assets(
+            self.root, VERSION, ROOT_URL, TAGS, stage_dir
+        )
+
+        self.assertEqual({path.name for path in first}, {path.name for path in second})
+
+    def test_staging_rejects_artifact_root_as_destination(self) -> None:
+        self._write_local_fixture()
+
+        with self.assertRaisesRegex(ValueError, "must not be the artifact root"):
+            stage_release_assets(
+                self.root, VERSION, ROOT_URL, TAGS, self.root
+            )
 
 
 if __name__ == "__main__":

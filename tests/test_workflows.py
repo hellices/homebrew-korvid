@@ -635,13 +635,19 @@ class TestTestWorkflow(unittest.TestCase):
         self.assertIn("brew install --verbose hellices/korvid/korvid", text)
         steps = wf["jobs"]["test-bottle"]["steps"]
         check_run = next(step["run"] for step in steps if step.get("id") == "bottle_check")
-        verify_run = next(
-            step["run"]
+        verify_step = next(
+            step
             for step in steps
             if step.get("name") == "Verify bottle was poured"
         )
+        verify_run = verify_step["run"]
         self.assertIn("filename=$bottle_filename", check_run)
-        self.assertIn("steps.bottle_check.outputs.filename", verify_run)
+        self.assertEqual(
+            verify_step["env"]["BOTTLE_FILENAME"],
+            "${{ steps.bottle_check.outputs.filename }}",
+        )
+        self.assertNotIn("${{", verify_run)
+        self.assertIn("$BOTTLE_FILENAME", verify_run)
         self.assertIn("Pouring ", verify_run)
         self.assertNotIn("Pouring korvid--", text)
 

@@ -34,6 +34,15 @@ def _expected_remote_filename(local_filename: str) -> str:
     return local_filename.replace("--", "-", 1)
 
 
+def _expected_json_filename(local_filename: str) -> str:
+    suffix = ".bottle.tar.gz"
+    if not local_filename.endswith(suffix):
+        raise ValueError(
+            f"local_filename {local_filename!r} must end with {suffix}"
+        )
+    return f"{local_filename[:-len(suffix)]}.bottle.json"
+
+
 @dataclass(frozen=True)
 class BottleArtifact:
     json_path: Path
@@ -48,8 +57,14 @@ def _collect_artifacts(
     version: str,
     root_url: str,
     expected_tags: set[str],
+    excluded_root: Path | None = None,
 ) -> list[BottleArtifact]:
-    json_paths = sorted(root.rglob("*.bottle.json"))
+    excluded = excluded_root.resolve() if excluded_root is not None else None
+
+    def included(path: Path) -> bool:
+        return excluded is None or not path.resolve().is_relative_to(excluded)
+
+    json_paths = sorted(path for path in root.rglob("*.bottle.json") if included(path))
     if not json_paths:
         raise ValueError(f"no bottle JSON files found under {root}")
 
@@ -93,12 +108,22 @@ def _collect_artifacts(
                 f"{json_path}: filename {filename!r} does not match the single-dash "
                 f"form of local_filename {local_filename!r} (expected {expected!r})"
             )
+        expected_json = _expected_json_filename(local_filename)
+        if json_path.name != expected_json:
+            raise ValueError(
+                f"{json_path}: JSON sidecar name must be {expected_json!r}"
+            )
 
         # Exactly one archive must be present, named by *either* the build-time
         # local_filename or the published remote filename -- never both, which
         # would make the checksum target ambiguous.
         present = sorted(
-            {p for name in {local_filename, filename} for p in root.rglob(name)}
+            {
+                path
+                for name in {local_filename, filename}
+                for path in root.rglob(name)
+                if included(path)
+            }
         )
         if not present:
             raise ValueError(
@@ -156,7 +181,15 @@ def stage_release_assets(
     containing each JSON metadata sidecar and each archive copied under its
     remote ``filename`` (the single-dash name Homebrew requests from the
     release ``root_url``). Returns the staged paths."""
-    artifacts = _collect_artifacts(root, version, root_url, expected_tags)
+    if stage_dir.resolve() == root.resolve():
+        raise ValueError("stage directory must not be the artifact root")
+    artifacts = _collect_artifacts(
+        root,
+        version,
+        root_url,
+        expected_tags,
+        excluded_root=stage_dir,
+    )
 
     stage_dir.mkdir(parents=True, exist_ok=True)
     for stale in (*stage_dir.glob("*.bottle.tar.gz"), *stage_dir.glob("*.bottle.json")):
