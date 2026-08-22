@@ -240,6 +240,19 @@ class TestBottlesWorkflow(unittest.TestCase):
             f"brew bottle --merge step (idx {merge_idx})",
         )
 
+    def test_bottle_branch_lookup_propagates_remote_errors(self):
+        wf = load_workflow(BOTTLES_WORKFLOW)
+        checkout_step = next(
+            step
+            for step in wf["jobs"]["publish"]["steps"]
+            if step.get("name") == "Checkout bottle branch"
+        )
+        run = checkout_step["run"]
+
+        self.assertIn("git ls-remote --exit-code --heads origin", run)
+        self.assertIn('if [ "$status" -ne 2 ]', run)
+        self.assertNotIn('git fetch origin "$BRANCH" || true', run)
+
     def test_commit_guarded_when_no_staged_difference(self):
         """The commit step must guard git commit so it does not fail when there
         is no staged difference (idempotent rerun)."""
@@ -743,6 +756,19 @@ class TestTestWorkflow(unittest.TestCase):
         self.assertIn("$BOTTLE_FILENAME", verify_run)
         self.assertIn("Pouring ", verify_run)
         self.assertNotIn("Pouring korvid--", text)
+
+    def test_bottle_tag_resolver_uses_metadata_url_filename(self):
+        wf = load_workflow(TEST_WORKFLOW)
+        bottle_check = next(
+            step
+            for step in wf["jobs"]["test-bottle"]["steps"]
+            if step.get("id") == "bottle_check"
+        )
+        run = bottle_check["run"]
+
+        self.assertIn("files[target]", run)
+        self.assertIn("urlsplit", run)
+        self.assertNotIn("print(f'korvid-{version}", run)
 
     def test_bottle_tag_resolver_fails_on_malformed_schema(self):
         """The inline bottle-tag resolver must not silently skip when the Homebrew

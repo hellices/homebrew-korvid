@@ -35,7 +35,7 @@ def _json_name(tag: str) -> str:
 class _FixtureBase(unittest.TestCase):
     def setUp(self) -> None:
         self._tmpdir = tempfile.TemporaryDirectory(
-            dir=Path(__file__).resolve().parents[1], prefix="validate-bottle-artifacts-"
+            prefix="validate-bottle-artifacts-"
         )
         self.root = Path(self._tmpdir.name)
 

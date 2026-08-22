@@ -357,11 +357,15 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # Fetch the remote branch if it exists, then check it out
-          git fetch origin "$BRANCH" || true
-          if git show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
+          # Exit 2 means no matching remote ref; all transport/auth errors fail.
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null; then
+            git fetch origin "$BRANCH"
             git checkout -b "$BRANCH" "origin/$BRANCH"
           else
+            status=$?
+            if [ "$status" -ne 2 ]; then
+              exit "$status"
+            fi
             git checkout -b "$BRANCH"
           fi
 

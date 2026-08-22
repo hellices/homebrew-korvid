@@ -90,6 +90,7 @@ jobs:
           info=$(brew info --json=v2 hellices/korvid/korvid)
           bottle_filename=$(echo "$info" | python3 -c "
           import json, sys, platform, subprocess
+          from urllib.parse import unquote, urlsplit
 
           data = json.load(sys.stdin)
 
@@ -153,7 +154,22 @@ jobs:
               sys.exit(1)
           base = tag_map[major]
           target = 'arm64_' + base if arch == 'arm64' else base
-          print(f'korvid-{version}.{target}.bottle.tar.gz' if target in files else '')
+          if target not in files:
+              print('')
+              sys.exit(0)
+          metadata = files[target]
+          if not isinstance(metadata, dict):
+              print('SCHEMA_ERROR: stable.files target is not a dict', file=sys.stderr)
+              sys.exit(1)
+          url = metadata.get('url')
+          if not isinstance(url, str) or not url:
+              print('SCHEMA_ERROR: stable.files target URL is missing', file=sys.stderr)
+              sys.exit(1)
+          filename = unquote(urlsplit(url).path).rsplit('/', 1)[-1]
+          if not filename.endswith('.bottle.tar.gz') or any(c in filename for c in '\r\n'):
+              print('SCHEMA_ERROR: stable.files target URL has no bottle filename', file=sys.stderr)
+              sys.exit(1)
+          print(filename)
           ")
           if [ -z "$bottle_filename" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
