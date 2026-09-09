@@ -52,6 +52,92 @@ def load_workflow(path) -> dict:
 
 
 class TestBottlesWorkflow(unittest.TestCase):
+    def _python_bootstrap(self):
+        wf = load_workflow(BOTTLES_WORKFLOW)
+        steps = wf["jobs"]["build"]["steps"]
+        names = [step.get("name") for step in steps]
+        self.assertIn("Prepare formula Python", names)
+        return steps, names, steps[names.index("Prepare formula Python")]["run"]
+
+    def test_formula_python_is_prepared_before_dependency_install(self):
+        _steps, names, run = self._python_bootstrap()
+        self.assertLess(names.index("Audit formula"), names.index("Prepare formula Python"))
+        self.assertLess(
+            names.index("Prepare formula Python"), names.index("Install build dependencies")
+        )
+        self.assertEqual(run.strip().splitlines()[0], "set -euo pipefail")
+        self.assertEqual(
+            run.strip().splitlines(),
+            [
+                "set -euo pipefail",
+                "python3 scripts/prepare_formula_python.py hellices/korvid/korvid",
+            ],
+        )
+
+    def test_source_install_uses_shared_python_preparation(self):
+        steps = load_workflow(TEST_WORKFLOW)["jobs"]["test"]["steps"]
+        names = [step.get("name") for step in steps]
+        self.assertIn("Prepare formula Python", names)
+        self.assertLess(names.index("Audit"), names.index("Prepare formula Python"))
+        self.assertLess(names.index("Prepare formula Python"), names.index("Install from source"))
+        self.assertIn(
+            "python3 scripts/prepare_formula_python.py hellices/korvid/korvid",
+            steps[names.index("Prepare formula Python")]["run"],
+        )
+
+    def test_bottle_python_preparation_stays_inside_network_restriction(self):
+        steps = load_workflow(TEST_WORKFLOW)["jobs"]["test-bottle"]["steps"]
+        names = [step.get("name") for step in steps]
+        self.assertIn("Prepare formula Python", names)
+        preparation = steps[names.index("Prepare formula Python")]
+        self.assertEqual(preparation["if"], "steps.bottle_check.outputs.skip == 'false'")
+        self.assertLess(
+            names.index("Block files.pythonhosted.org"), names.index("Prepare formula Python")
+        )
+        self.assertLess(names.index("Prepare formula Python"), names.index("Install bottle"))
+        self.assertIn(
+            "python3 scripts/prepare_formula_python.py hellices/korvid/korvid",
+            preparation["run"],
+        )
+
+    def test_dependencies_are_installed_before_build_bottle_mode(self):
+        wf = load_workflow(BOTTLES_WORKFLOW)
+        steps = wf["jobs"]["build"]["steps"]
+        names = [step.get("name") for step in steps]
+        self.assertIn("Install build dependencies", names)
+        bootstrap = steps[names.index("Install build dependencies")]
+        self.assertEqual(
+            bootstrap["run"].strip().splitlines(),
+            [
+                "set -euo pipefail",
+                "brew install --only-dependencies --verbose hellices/korvid/korvid",
+            ],
+        )
+        self.assertLess(names.index("Audit formula"), names.index("Install build dependencies"))
+        self.assertLess(
+            names.index("Install build dependencies"),
+            names.index("Install (build-bottle mode)"),
+        )
+
+    def test_branch_dispatch_cannot_publish_bottles(self):
+        wf = load_workflow(BOTTLES_WORKFLOW)
+        self.assertEqual(
+            wf["jobs"]["publish"].get("if"),
+            "github.ref == 'refs/heads/main'",
+        )
+
+    def test_workflow_fixes_trigger_delivery_after_merge(self):
+        wf = load_workflow(BOTTLES_WORKFLOW)
+        events = wf.get("on", wf.get("true", {}))
+        self.assertIn("push", events)
+        self.assertEqual(events["push"]["branches"], ["main"])
+        self.assertIn(".github/workflows/bottles.yml", events["push"]["paths"])
+        self.assertIn("scripts/prepare_formula_python.py", events["push"]["paths"])
+
+    def test_architecture_builds_do_not_cancel_each_other(self):
+        wf = load_workflow(BOTTLES_WORKFLOW)
+        self.assertIs(wf["jobs"]["build"]["strategy"].get("fail-fast"), False)
+
     def test_bottle_workflow_builds_both_macos_architectures(self):
         text = BOTTLES_WORKFLOW.read_text()
         self.assertIn("macos-15", text)
