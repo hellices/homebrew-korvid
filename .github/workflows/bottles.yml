@@ -138,6 +138,22 @@ jobs:
           set -euo pipefail
           brew audit --strict hellices/korvid/korvid
 
+      - name: Prepare formula Python
+        run: |
+          set -euo pipefail
+          python_formula=$(brew info --json=v2 hellices/korvid/korvid | python3 -c "
+          import json, re, sys
+          dependencies = json.load(sys.stdin)['formulae'][0]['dependencies']
+          if not isinstance(dependencies, list) or any(not isinstance(name, str) for name in dependencies):
+              sys.exit('Expected exactly one versioned Python dependency in a dependency list')
+          names = [name for name in dependencies if re.fullmatch(r'python@3\.[0-9]+', name)]
+          if len(names) != 1:
+              sys.exit('Expected exactly one versioned Python dependency')
+          print(names[0])
+          ")
+          brew install --overwrite --verbose "$python_formula"
+          brew link --overwrite "$python_formula"
+
       - name: Install build dependencies
         run: |
           set -euo pipefail

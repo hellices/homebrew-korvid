@@ -52,6 +52,58 @@ def load_workflow(path) -> dict:
 
 
 class TestBottlesWorkflow(unittest.TestCase):
+    def _python_bootstrap(self):
+        wf = load_workflow(BOTTLES_WORKFLOW)
+        steps = wf["jobs"]["build"]["steps"]
+        names = [step.get("name") for step in steps]
+        self.assertIn("Prepare formula Python", names)
+        return steps, names, steps[names.index("Prepare formula Python")]["run"]
+
+    def test_formula_python_is_prepared_before_dependency_install(self):
+        _steps, names, run = self._python_bootstrap()
+        self.assertLess(names.index("Audit formula"), names.index("Prepare formula Python"))
+        self.assertLess(
+            names.index("Prepare formula Python"), names.index("Install build dependencies")
+        )
+        self.assertEqual(run.strip().splitlines()[0], "set -euo pipefail")
+        self.assertEqual(
+            run.strip().splitlines()[-2:],
+            [
+                'brew install --overwrite --verbose "$python_formula"',
+                'brew link --overwrite "$python_formula"',
+            ],
+        )
+
+    def test_formula_python_selector_requires_one_versioned_interpreter(self):
+        _steps, _names, run = self._python_bootstrap()
+        marker = 'python3 -c "\n'
+        self.assertIn(marker, run)
+        selector = run.split(marker, 1)[1].split('\n")', 1)[0]
+        cases = [
+            (["rust", "python@3.13", "libyaml"], "python@3.13"),
+            (["python@3.14"], "python@3.14"),
+            ([], None),
+            (["python@3.13", "python@3.14"], None),
+            (["python@3.13;unexpected"], None),
+            ([42], None),
+            ({"python@3.13": "unexpected"}, None),
+        ]
+        for dependencies, expected in cases:
+            with self.subTest(dependencies=dependencies):
+                result = subprocess.run(
+                    ["python3", "-c", selector],
+                    input=json.dumps({"formulae": [{"dependencies": dependencies}]}),
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                if expected is None:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("Expected exactly one", result.stderr)
+                else:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.strip(), expected)
+
     def test_dependencies_are_installed_before_build_bottle_mode(self):
         wf = load_workflow(BOTTLES_WORKFLOW)
         steps = wf["jobs"]["build"]["steps"]

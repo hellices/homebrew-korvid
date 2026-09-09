@@ -166,6 +166,9 @@ automatically; do not edit the formula by hand.
 The bottle workflow prepares Homebrew dependencies with a normal install before
 entering build-bottle mode, so missing upstream dependency bottles can be built
 from source without changing versions or bypassing dependency checks.
+It first installs and links the formula's selected Homebrew Python to replace
+conflicting Python.org aliases on hosted CI images. Overwrite is scoped to that
+interpreter in the disposable CI jobs, not applied to all dependencies.
 Dispatching that workflow on a topic branch builds and tests artifacts only;
 release publication and the bottle metadata PR are restricted to `main`.
 Merging a bottle-workflow fix also triggers delivery.
