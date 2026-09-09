@@ -52,6 +52,43 @@ def load_workflow(path) -> dict:
 
 
 class TestBottlesWorkflow(unittest.TestCase):
+    def test_dependencies_are_installed_before_build_bottle_mode(self):
+        wf = load_workflow(BOTTLES_WORKFLOW)
+        steps = wf["jobs"]["build"]["steps"]
+        names = [step.get("name") for step in steps]
+        self.assertIn("Install build dependencies", names)
+        bootstrap = steps[names.index("Install build dependencies")]
+        self.assertEqual(
+            bootstrap["run"].strip().splitlines(),
+            [
+                "set -euo pipefail",
+                "brew install --only-dependencies --verbose hellices/korvid/korvid",
+            ],
+        )
+        self.assertLess(names.index("Audit formula"), names.index("Install build dependencies"))
+        self.assertLess(
+            names.index("Install build dependencies"),
+            names.index("Install (build-bottle mode)"),
+        )
+
+    def test_branch_dispatch_cannot_publish_bottles(self):
+        wf = load_workflow(BOTTLES_WORKFLOW)
+        self.assertEqual(
+            wf["jobs"]["publish"].get("if"),
+            "github.ref == 'refs/heads/main'",
+        )
+
+    def test_workflow_fixes_trigger_delivery_after_merge(self):
+        wf = load_workflow(BOTTLES_WORKFLOW)
+        events = wf.get("on", wf.get("true", {}))
+        self.assertIn("push", events)
+        self.assertEqual(events["push"]["branches"], ["main"])
+        self.assertIn(".github/workflows/bottles.yml", events["push"]["paths"])
+
+    def test_architecture_builds_do_not_cancel_each_other(self):
+        wf = load_workflow(BOTTLES_WORKFLOW)
+        self.assertIs(wf["jobs"]["build"]["strategy"].get("fail-fast"), False)
+
     def test_bottle_workflow_builds_both_macos_architectures(self):
         text = BOTTLES_WORKFLOW.read_text()
         self.assertIn("macos-15", text)

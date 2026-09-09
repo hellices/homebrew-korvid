@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - Formula/korvid.rb
+      - .github/workflows/bottles.yml
   workflow_dispatch:
 
 permissions:
@@ -107,6 +108,7 @@ jobs:
       group: bottles-${{ needs.prepare.outputs.release_tag }}-${{ matrix.tag }}
       cancel-in-progress: false
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: macos-15
@@ -135,6 +137,11 @@ jobs:
         run: |
           set -euo pipefail
           brew audit --strict hellices/korvid/korvid
+
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+          brew install --only-dependencies --verbose hellices/korvid/korvid
 
       - name: Install (build-bottle mode)
         run: |
@@ -188,6 +195,7 @@ jobs:
           if-no-files-found: error
 
   publish:
+    if: github.ref == 'refs/heads/main'
     needs:
       - prepare
       - build

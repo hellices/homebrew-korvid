@@ -31,17 +31,24 @@ When the formula lists a bottle for the host's macOS 15 tag (Apple Silicon or
 Intel), `brew install hellices/korvid/korvid` downloads that pre-built bottle
 from GitHub Releases and does **not** contact PyPI or
 `files.pythonhosted.org`. If matching bottle metadata has not been merged yet,
-Homebrew falls back to a source build, which requires PyPI. Homebrew's own
-dependency bottles are also fetched from GitHub.
+Homebrew falls back to a source build, which requires PyPI. Homebrew's available
+dependency bottles are also fetched from GitHub. Homebrew dependencies may
+require source builds when upstream does not provide a bottle for the host;
+those builds need developer tools and access to their upstream source URLs.
 
 ### Prefetch on a matching connected Mac
 
 Run the following on a Mac that matches the **architecture and macOS version**
 of the target host (the bottle tag must match).
-The preflight below is the failure gate for staging.
+The preflight below is a failure gate for staging the Korvid bottle.
 Fetching with `--force-bottle` does not fail when no bottle exists, so an
 explicit `brew info --json=v2` schema and tag check runs first and stops
 staging on an unsupported host before anything is fetched.
+
+This preflight checks the Korvid bottle only, not the complete dependency
+closure. A successful preflight is not a fully offline qualification when a
+Homebrew dependency is source-only. Such a dependency and its build inputs need
+separate staging and validation before using the disconnected-host recipe.
 
 ```bash
 set -euo pipefail
@@ -155,3 +162,10 @@ from the `uv.lock` the corresponding korvid release was tested against, by
 [`scripts/generate_homebrew_formula.py`](https://github.com/hellices/korvid/blob/main/scripts/generate_homebrew_formula.py)
 in the main repository. The release workflow opens the bump here
 automatically; do not edit the formula by hand.
+
+The bottle workflow prepares Homebrew dependencies with a normal install before
+entering build-bottle mode, so missing upstream dependency bottles can be built
+from source without changing versions or bypassing dependency checks.
+Dispatching that workflow on a topic branch builds and tests artifacts only;
+release publication and the bottle metadata PR are restricted to `main`.
+Merging a bottle-workflow fix also triggers delivery.

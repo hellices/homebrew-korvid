@@ -79,6 +79,12 @@ class ReadmePreflightExtractionMixin(unittest.TestCase):
 
 
 class ReadmeAirgapPreflightTests(ReadmePreflightExtractionMixin):
+    def test_source_only_dependencies_are_not_claimed_fully_offline(self) -> None:
+        prose = " ".join(self.text.split())
+        self.assertIn("dependencies may require source builds", prose)
+        self.assertIn("preflight checks the Korvid bottle only", prose)
+        self.assertIn("not a fully offline qualification", prose)
+
     def test_normal_installation_claim_depends_on_formula_bottle_metadata(self) -> None:
         section = self.text.split(
             "### Normal restricted-network behavior", 1
