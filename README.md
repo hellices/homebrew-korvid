@@ -12,8 +12,8 @@ Homebrew's own Python, so the system interpreter is irrelevant.
 
 ## What is installed
 
-The base package plus the `[agent]` extra — the AI features are the point
-of korvid, and `httpx`/`keyring` are what they need.
+The base package plus the `[agent]` extra, including LiteLLM-backed model
+connections, provider integrations, and credential support.
 
 The `[mcp]` extra is **not** installed. It puts an HTTP server on the
 machine, and a convenience channel should not opt anyone into that. If you
