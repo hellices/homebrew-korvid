@@ -399,6 +399,8 @@ class Korvid < Formula
   end
 
   def install
+    # macOS extensions resolve CPython symbols when loaded.
+    ENV.append_to_rustflags "-C link-arg=-Wl,-undefined,dynamic_lookup" if OS.mac?
     venv = virtualenv_install_with_resources(without: ["hf-xet", "litellm"])
     # aws-lc's jitter entropy collector rejects optimized C.
     ENV.O0 { venv.pip_install [resource("hf-xet"), resource("litellm")] }
