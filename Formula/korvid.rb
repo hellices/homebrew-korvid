@@ -408,5 +408,9 @@ class Korvid < Formula
 
   test do
     assert_match "0.4.1", shell_output("#{bin}/korvid --version")
+    # Use bundled model metadata during the import smoke test.
+    ENV["LITELLM_LOCAL_MODEL_COST_MAP"] = "true"
+    system libexec/"bin/python", "-I", "-c",
+           "import hf_xet, litellm.rust_bridge._native, tokenizers.tokenizers"
   end
 end
