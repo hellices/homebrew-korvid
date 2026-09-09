@@ -399,9 +399,9 @@ class Korvid < Formula
   end
 
   def install
-    venv = virtualenv_install_with_resources(without: ["hf-xet"])
+    venv = virtualenv_install_with_resources(without: ["hf-xet", "litellm"])
     # aws-lc's jitter entropy collector rejects optimized C.
-    ENV.O0 { venv.pip_install resource("hf-xet") }
+    ENV.O0 { venv.pip_install [resource("hf-xet"), resource("litellm")] }
   end
 
   test do
