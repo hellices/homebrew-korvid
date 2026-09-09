@@ -169,6 +169,9 @@ from source without changing versions or bypassing dependency checks.
 It first installs and links the formula's selected Homebrew Python to replace
 conflicting Python.org aliases on hosted CI images. Overwrite is scoped to that
 interpreter in the disposable CI jobs, not applied to all dependencies.
+The same helper prepares source-install and bottle-install test jobs; bottle
+tests run it after blocking the PyPI file host so the network restriction still
+covers dependency preparation.
 Dispatching that workflow on a topic branch builds and tests artifacts only;
 release publication and the bottle metadata PR are restricted to `main`.
 Merging a bottle-workflow fix also triggers delivery.

@@ -67,42 +67,38 @@ class TestBottlesWorkflow(unittest.TestCase):
         )
         self.assertEqual(run.strip().splitlines()[0], "set -euo pipefail")
         self.assertEqual(
-            run.strip().splitlines()[-2:],
+            run.strip().splitlines(),
             [
-                'brew install --overwrite --verbose "$python_formula"',
-                'brew link --overwrite "$python_formula"',
+                "set -euo pipefail",
+                "python3 scripts/prepare_formula_python.py hellices/korvid/korvid",
             ],
         )
 
-    def test_formula_python_selector_requires_one_versioned_interpreter(self):
-        _steps, _names, run = self._python_bootstrap()
-        marker = 'python3 -c "\n'
-        self.assertIn(marker, run)
-        selector = run.split(marker, 1)[1].split('\n")', 1)[0]
-        cases = [
-            (["rust", "python@3.13", "libyaml"], "python@3.13"),
-            (["python@3.14"], "python@3.14"),
-            ([], None),
-            (["python@3.13", "python@3.14"], None),
-            (["python@3.13;unexpected"], None),
-            ([42], None),
-            ({"python@3.13": "unexpected"}, None),
-        ]
-        for dependencies, expected in cases:
-            with self.subTest(dependencies=dependencies):
-                result = subprocess.run(
-                    ["python3", "-c", selector],
-                    input=json.dumps({"formulae": [{"dependencies": dependencies}]}),
-                    text=True,
-                    capture_output=True,
-                    check=False,
-                )
-                if expected is None:
-                    self.assertNotEqual(result.returncode, 0)
-                    self.assertIn("Expected exactly one", result.stderr)
-                else:
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertEqual(result.stdout.strip(), expected)
+    def test_source_install_uses_shared_python_preparation(self):
+        steps = load_workflow(TEST_WORKFLOW)["jobs"]["test"]["steps"]
+        names = [step.get("name") for step in steps]
+        self.assertIn("Prepare formula Python", names)
+        self.assertLess(names.index("Audit"), names.index("Prepare formula Python"))
+        self.assertLess(names.index("Prepare formula Python"), names.index("Install from source"))
+        self.assertIn(
+            "python3 scripts/prepare_formula_python.py hellices/korvid/korvid",
+            steps[names.index("Prepare formula Python")]["run"],
+        )
+
+    def test_bottle_python_preparation_stays_inside_network_restriction(self):
+        steps = load_workflow(TEST_WORKFLOW)["jobs"]["test-bottle"]["steps"]
+        names = [step.get("name") for step in steps]
+        self.assertIn("Prepare formula Python", names)
+        preparation = steps[names.index("Prepare formula Python")]
+        self.assertEqual(preparation["if"], "steps.bottle_check.outputs.skip == 'false'")
+        self.assertLess(
+            names.index("Block files.pythonhosted.org"), names.index("Prepare formula Python")
+        )
+        self.assertLess(names.index("Prepare formula Python"), names.index("Install bottle"))
+        self.assertIn(
+            "python3 scripts/prepare_formula_python.py hellices/korvid/korvid",
+            preparation["run"],
+        )
 
     def test_dependencies_are_installed_before_build_bottle_mode(self):
         wf = load_workflow(BOTTLES_WORKFLOW)
@@ -136,6 +132,7 @@ class TestBottlesWorkflow(unittest.TestCase):
         self.assertIn("push", events)
         self.assertEqual(events["push"]["branches"], ["main"])
         self.assertIn(".github/workflows/bottles.yml", events["push"]["paths"])
+        self.assertIn("scripts/prepare_formula_python.py", events["push"]["paths"])
 
     def test_architecture_builds_do_not_cancel_each_other(self):
         wf = load_workflow(BOTTLES_WORKFLOW)

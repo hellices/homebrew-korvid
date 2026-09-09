@@ -42,6 +42,11 @@ jobs:
       - name: Audit
         run: brew audit --strict hellices/korvid/korvid
 
+      - name: Prepare formula Python
+        run: |
+          set -euo pipefail
+          python3 scripts/prepare_formula_python.py hellices/korvid/korvid
+
       - name: Install from source
         run: brew install --build-from-source --verbose hellices/korvid/korvid
 
@@ -207,6 +212,12 @@ jobs:
             | sudo tee -a /etc/hosts >/dev/null
           grep -Fxq "127.0.0.1 files.pythonhosted.org" /etc/hosts
           grep -Fxq "::1 files.pythonhosted.org" /etc/hosts
+
+      - name: Prepare formula Python
+        if: steps.bottle_check.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          python3 scripts/prepare_formula_python.py hellices/korvid/korvid
 
       - name: Install bottle
         if: steps.bottle_check.outputs.skip == 'false'
