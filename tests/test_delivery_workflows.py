@@ -56,8 +56,11 @@ class TestDeliveryWorkflow(unittest.TestCase):
             index for index, step in enumerate(steps) if step.get("id") == "qualify"
         )
         self.assertLess(qualify_index, token_index)
-        self.assertIn("steps.qualify.outputs.head != ''", steps[token_index]["if"])
-        self.assertIn("inputs.dry_run", steps[token_index]["if"])
+        self.assertEqual(
+            steps[token_index]["if"],
+            "steps.qualify.outputs.head != '' && "
+            "(github.event_name != 'workflow_dispatch' || !inputs.dry_run)",
+        )
         self.assertIs(events["workflow_dispatch"]["inputs"]["dry_run"]["default"], True)
 
     def test_merge_token_is_scoped_to_tap_contents_and_pull_requests(self):
