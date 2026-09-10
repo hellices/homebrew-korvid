@@ -175,3 +175,70 @@ covers dependency preparation.
 Dispatching that workflow on a topic branch builds and tests artifacts only;
 release publication and the bottle metadata PR are restricted to `main`.
 Merging a bottle-workflow fix also triggers delivery.
+
+### Automatic release delivery
+
+Publishing a stable korvid release is the approval boundary for normal
+distribution. The source release workflow opens an App-authored
+`bump-korvid-X.Y.Z` PR. After source-install qualification, the trusted
+default-branch [delivery workflow](.github/workflows/automatic-delivery.yml)
+checks the exact formula against the published source-release asset and merges
+the current head. That main push builds and publishes both macOS bottles.
+The bottle workflow opens an App-authored `bottles-korvid-X.Y.Z` PR; the same
+gate checks its metadata against published archive digests and JSON build
+provenance, requires successful installation on both architectures, then merges.
+
+Only `Formula/korvid.rb` may change. Equal/older version bumps, replacement of
+existing bottles, unexpected source changes, draft/prereleases, failed checks,
+conflicts and unresolved reviews stop delivery. Source-only version PRs
+legitimately skip pouring nonexistent bottles; metadata PRs must contain both
+published platforms. Code, workflow and documentation PRs remain manual.
+The gate reads PR contents through GitHub APIs; it never checks out or executes
+PR code with write credentials.
+
+Both branch writes and PR creation use short-lived GitHub App tokens. This lets
+PR CI and the next main-push workflow run without the execution-approval
+friction of `GITHUB_TOKEN`-created PRs. Bottle assets are still published with
+the job's own `GITHUB_TOKEN`; the App token is minted only for the final
+branch/PR handoff, after long native builds and artifact validation.
+
+#### One-time setup
+
+1. Register a private GitHub App under `hellices`, with webhooks disabled and
+   only repository **Contents: read/write** and **Pull requests: read/write**
+   (Metadata read is implicit). Install it on **only**
+   `hellices/homebrew-korvid`. The App does not need source-repository access.
+2. In both `hellices/korvid` and `hellices/homebrew-korvid`, set the Actions
+   variable `HOMEBREW_APP_ID` and secret `HOMEBREW_APP_PRIVATE_KEY`. In the tap,
+   also set `HOMEBREW_APP_SLUG` to the App slug without `[bot]`. Supply the key
+   through a secret-manager or stdin, never a committed file or command argument.
+3. Keep all existing main protections, including resolved review threads and
+   no bypass actors. Require all of these checks with **up-to-date branches**:
+   `test (ubuntu-latest)`, `test (macos-latest)`,
+   `test-bottle (macos-15)`, `test-bottle (macos-15-intel)`.
+   GitHub's extra approval rule for unattributed Copilot PRs remains unchanged;
+   it has no effect when the required approval count is zero.
+4. Leave repository-wide native auto-merge disabled. The delivery workflow
+   performs a one-shot, exact-SHA squash merge after qualification rather than
+   leaving a merge authorization pending across later edits. Without a
+   configured App slug it does not act on ordinary PR-completion events.
+
+Missing App credentials fail the release/bottle handoff explicitly; source
+formula assets and already published bottle assets remain available for
+recovery. A failed delivery workflow records the blocker in its run summary
+and follows normal GitHub Actions failure notifications. Resolve the failure,
+then re-run the original handoff or requalify an existing deployment PR:
+
+```sh
+gh workflow run automatic-delivery.yml --repo hellices/homebrew-korvid \
+  --ref main -f pull_request=NUMBER -F dry_run=true
+```
+
+Validation-only is the manual default. Set `dry_run=false` only to request the
+same protected merge after validation; this never bypasses a failed check or
+review. A stale PR may require a maintainer to update its branch and rerun CI.
+Bottle handoff retries prefer an open App PR targeting `main`. Without one,
+the latest closed App PR must record the same branch head. A leftover branch
+with no PR history fails closed and requires maintainer recovery; do not
+overwrite or delete it automatically.
+Do not replay the obsolete v0.4.1 source-release formula over the corrected tap.

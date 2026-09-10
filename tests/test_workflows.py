@@ -166,7 +166,7 @@ class TestBottlesWorkflow(unittest.TestCase):
         )
         self.assertIn("brew bottle --merge --write --no-commit", text)
 
-    def test_bottle_workflow_opens_but_never_merges_a_pr(self):
+    def test_bottle_workflow_opens_a_pr_and_leaves_merge_to_the_trusted_gate(self):
         wf = load_workflow(BOTTLES_WORKFLOW)
         run_scripts = "\n".join(
             step.get("run") or ""
@@ -175,7 +175,7 @@ class TestBottlesWorkflow(unittest.TestCase):
         )
 
         self.assertIn("gh pr create", run_scripts)
-        self.assertIn("gh workflow run test.yml", run_scripts)
+        self.assertNotIn("gh workflow run test.yml", run_scripts)
         self.assertNotIn("gh pr merge", run_scripts)
 
     def test_draft_asset_deletion_passes_release_tag_via_env_not_literal(self):
@@ -230,11 +230,10 @@ class TestBottlesWorkflow(unittest.TestCase):
             for step in publish_steps
             if "setup-homebrew" in (step.get("uses") or "")
         )
-        self.assertEqual(
-            publish_setup.get("with", {}).get("token"),
-            "${{ secrets.GITHUB_TOKEN }}",
-            "publish setup-homebrew replaces the checkout repository and must "
-            "persist a token that survives for git push",
+        self.assertNotIn(
+            "token",
+            publish_setup.get("with", {}),
+            "a setup-homebrew GITHUB_TOKEN extraheader would override the App credential helper",
         )
 
     def test_publish_job_has_concurrency_group(self):
