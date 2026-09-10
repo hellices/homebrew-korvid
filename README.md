@@ -237,4 +237,8 @@ gh workflow run automatic-delivery.yml --repo hellices/homebrew-korvid \
 Validation-only is the manual default. Set `dry_run=false` only to request the
 same protected merge after validation; this never bypasses a failed check or
 review. A stale PR may require a maintainer to update its branch and rerun CI.
+Bottle handoff retries prefer an open App PR targeting `main`. Without one,
+the latest closed App PR must record the same branch head. A leftover branch
+with no PR history fails closed and requires maintainer recovery; do not
+overwrite or delete it automatically.
 Do not replay the obsolete v0.4.1 source-release formula over the corrected tap.

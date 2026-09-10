@@ -438,8 +438,19 @@ jobs:
               echo "Existing delivery branch is not a formula-only update." >&2
               exit 1
             fi
-            author=$(gh api "repos/$GITHUB_REPOSITORY/pulls?head=hellices:$BRANCH&state=all&per_page=100" --jq '.[0].user.login // empty')
-            if [ -n "$author" ] && [ "$author" != "${APP_SLUG}[bot]" ]; then
+            # A reopened PR may be older than a closed PR for this branch.
+            author=$(gh api \
+              "repos/$GITHUB_REPOSITORY/pulls?head=hellices:$BRANCH&state=open&base=main&per_page=100" \
+              --jq '.[0] | select(. != null) | .user.login // "unknown"')
+            if [ -z "$author" ]; then
+              # Retry a closed App PR only while its recorded head still matches;
+              # no PR history is not evidence that the App owns this branch.
+              head_sha=$(git rev-parse "origin/$BRANCH")
+              author=$(gh api \
+                "repos/$GITHUB_REPOSITORY/pulls?head=hellices:$BRANCH&state=closed&base=main&per_page=100" \
+                --jq ".[0] | select(.head.sha == \"$head_sha\") | .user.login // empty")
+            fi
+            if [ "$author" != "${APP_SLUG}[bot]" ]; then
               echo "Existing delivery PR is not owned by the delivery App." >&2
               exit 1
             fi
@@ -505,7 +516,7 @@ jobs:
             exit 0
           fi
 
-          EXISTING_PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          EXISTING_PR=$(gh pr list --head "$BRANCH" --base main --state open --json number --jq '.[0].number // empty')
           if [ -z "$EXISTING_PR" ]; then
             gh pr create \
               --head "$BRANCH" \
