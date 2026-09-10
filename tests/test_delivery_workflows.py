@@ -58,7 +58,7 @@ class TestDeliveryWorkflow(unittest.TestCase):
         self.assertLess(qualify_index, token_index)
         self.assertIn("steps.qualify.outputs.head != ''", steps[token_index]["if"])
         self.assertIn("inputs.dry_run", steps[token_index]["if"])
-        self.assertTrue(events["workflow_dispatch"]["inputs"]["dry_run"]["default"])
+        self.assertIs(events["workflow_dispatch"]["inputs"]["dry_run"]["default"], True)
 
     def test_merge_token_is_scoped_to_tap_contents_and_pull_requests(self):
         self.assertTrue(WORKFLOW.exists(), "automatic delivery workflow is missing")
