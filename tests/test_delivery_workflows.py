@@ -35,6 +35,10 @@ class TestDeliveryWorkflow(unittest.TestCase):
         job = workflow["jobs"]["deliver"]
         self.assertIn("github.ref == 'refs/heads/main'", job["if"])
         self.assertIn("vars.HOMEBREW_APP_SLUG != ''", job["if"])
+        self.assertIn(
+            "github.event.workflow_run.head_repository.full_name == github.repository",
+            job["if"],
+        )
         steps = job["steps"]
         checkout = next(
             step

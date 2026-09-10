@@ -193,6 +193,13 @@ class TestAutoMergeDelivery(unittest.TestCase):
         self.assertEqual(self.module.qualify(client, 12, "delivery", 42), "a" * 40)
         self.assertEqual(self.module.pr_for_run(client, 42), 12)
 
+    def test_explicit_fork_run_cannot_discover_a_tap_delivery_pr(self):
+        client = FakeGitHub()
+        client.current_run["head_repository"]["full_name"] = "contributor/fork"
+        with self.assertRaisesRegex(ValueError, "same-repository"):
+            self.module.pr_for_run(client, 42)
+        self.assertEqual(client.calls, [f"repos/{TAP}/actions/runs/42"])
+
     def test_old_workflow_completion_cannot_merge_after_newer_run(self):
         with self.assertRaisesRegex(ValueError, "latest"):
             self.module.qualify(FakeGitHub(), 12, "delivery", 41)
