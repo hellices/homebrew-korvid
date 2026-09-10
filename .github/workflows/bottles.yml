@@ -210,9 +210,7 @@ jobs:
       group: bottles-publish-${{ needs.prepare.outputs.release_tag }}
       cancel-in-progress: false
     permissions:
-      actions: write
       contents: write
-      pull-requests: write
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
@@ -225,8 +223,6 @@ jobs:
 
       - name: Set up Homebrew
         uses: Homebrew/actions/setup-homebrew@a657b8b0cd35d0f65cce41fce9b24cf054b49869  # master
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Homebrew tap
         run: |
@@ -245,6 +241,7 @@ jobs:
       - name: Determine release state and validate/publish
         run: |
           set -euo pipefail
+          bash scripts/check_bottle_main.sh
 
           # Only an HTTP 404 means no release. Network, authentication, and
           # rate-limit failures must remain visible.
@@ -341,7 +338,8 @@ jobs:
           print('confirmed ' + str(len(local)) + ' staged assets present as release assets: ' + ', '.join(sorted(local)))
           "
 
-            # Publish the release only after confirming completeness
+            # Uploads can take time; check source freshness again before publishing.
+            bash scripts/check_bottle_main.sh
             gh release edit "$RELEASE_TAG" --draft=false
 
             # The staged directory holds the validated JSON sidecars the
@@ -379,27 +377,84 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Guard against stale bottle delivery
+        id: delivery
+        run: |
+          set -euo pipefail
+          bash scripts/check_bottle_main.sh >> "$GITHUB_OUTPUT"
+
+      - name: Check delivery App configuration
+        if: steps.delivery.outputs.needed == 'true'
+        env:
+          APP_ID: ${{ vars.HOMEBREW_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.HOMEBREW_APP_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$APP_ID" ] || [ -z "$APP_PRIVATE_KEY" ]; then
+            echo "::error::Configure HOMEBREW_APP_ID and HOMEBREW_APP_PRIVATE_KEY to deliver published bottles."
+            exit 1
+          fi
+
+      - name: Create delivery App token
+        id: app-token
+        if: steps.delivery.outputs.needed == 'true'
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349  # v2
+        with:
+          app-id: ${{ vars.HOMEBREW_APP_ID }}
+          private-key: ${{ secrets.HOMEBREW_APP_PRIVATE_KEY }}
+          owner: hellices
+          repositories: homebrew-korvid
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Configure delivery App Git identity
+        if: steps.delivery.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          gh auth setup-git --hostname github.com
+          BOT_LOGIN="${APP_SLUG}[bot]"
+          BOT_ID=$(gh api "users/$BOT_LOGIN" --jq .id)
+          [[ "$BOT_ID" =~ ^[0-9]+$ ]]
+          git config user.name "$BOT_LOGIN"
+          git config user.email "${BOT_ID}+${BOT_LOGIN}@users.noreply.github.com"
+
       - name: Checkout bottle branch
+        if: steps.delivery.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
         run: |
           set -euo pipefail
           BRANCH="bottles-korvid-${VERSION}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
           # Exit 2 means no matching remote ref; all transport/auth errors fail.
           if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null; then
-            git fetch origin "$BRANCH"
+            git fetch origin "$BRANCH:refs/remotes/origin/$BRANCH"
+            changed=$(git diff --name-only origin/main "origin/$BRANCH")
+            if [ "$changed" != "Formula/korvid.rb" ]; then
+              echo "Existing delivery branch is not a formula-only update." >&2
+              exit 1
+            fi
+            author=$(gh api "repos/$GITHUB_REPOSITORY/pulls?head=hellices:$BRANCH&state=all&per_page=100" --jq '.[0].user.login // empty')
+            if [ -n "$author" ] && [ "$author" != "${APP_SLUG}[bot]" ]; then
+              echo "Existing delivery PR is not owned by the delivery App." >&2
+              exit 1
+            fi
             git checkout -b "$BRANCH" "origin/$BRANCH"
+            echo "RESUMED_BOTTLE_BRANCH=true" >> "$GITHUB_ENV"
           else
             status=$?
             if [ "$status" -ne 2 ]; then
               exit "$status"
             fi
-            git checkout -b "$BRANCH"
+            git checkout -b "$BRANCH" origin/main
           fi
 
       - name: Update formula with bottle metadata
+        if: steps.delivery.outputs.needed == 'true'
         run: |
           set -euo pipefail
 
@@ -412,8 +467,15 @@ jobs:
 
           brew bottle --merge --write --no-commit --no-all-checks "${json_paths[@]}"
           ruby -c Formula/korvid.rb
+          if [ "${RESUMED_BOTTLE_BRANCH:-false}" = "true" ] && ! git diff --quiet; then
+            echo "Existing delivery branch differs from published metadata; refusing to overwrite it." >&2
+            exit 1
+          fi
 
       - name: Commit and push bottle branch
+        if: steps.delivery.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
           BRANCH="bottles-korvid-${VERSION}"
@@ -428,9 +490,10 @@ jobs:
               -m "Co-authored-by: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
           fi
 
-          git push --force-with-lease origin "$BRANCH"
+          git push origin "$BRANCH"
 
       - name: Open pull request if none exists
+        if: steps.delivery.outputs.needed == 'true'
         run: |
           set -euo pipefail
           BRANCH="bottles-korvid-${VERSION}"
@@ -454,17 +517,9 @@ jobs:
           - Validated with \`scripts/validate_bottle_artifacts.py\`
           - Release: $ROOT_URL
 
-          **Do not merge this PR without human review.**"
+          The default-branch delivery gate merges only after both source and bottle installation checks, release provenance, current-head validation, and branch protection pass. Unexpected changes or unresolved reviews stop delivery."
           else
             echo "PR #${EXISTING_PR} already exists for branch ${BRANCH}; skipping creation."
           fi
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Trigger test workflow on bottle branch
-        run: |
-          set -euo pipefail
-          BRANCH="bottles-korvid-${VERSION}"
-          gh workflow run test.yml --ref "$BRANCH"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
