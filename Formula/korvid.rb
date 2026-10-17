@@ -9,8 +9,8 @@ class Korvid < Formula
 
   desc "AI-native Kubernetes TUI"
   homepage "https://github.com/hellices/korvid"
-  url "https://files.pythonhosted.org/packages/fb/f6/9d5f53546eec51f6f5f7f6d415c1bab6a673a7a079753d20ec9afaf84090/korvid-0.5.0.tar.gz"
-  sha256 "df0d1e4c7778dcf10f694217cbc9dce79e76cd66ddb31594a2f57ac91240745a"
+  url "https://files.pythonhosted.org/packages/75/d8/f85118e60da8d67b122cffe460390244ac78531bf7d69a3d882b26328929/korvid-0.6.0.tar.gz"
+  sha256 "fd91e5dc6035e52303fe9a882d59be7f6c8a0a934fbc40fe199a1688d4435c34"
   license "Apache-2.0"
 
   depends_on "rust" => :build
@@ -209,8 +209,8 @@ class Korvid < Formula
   end
 
   resource "litellm" do
-    url "https://files.pythonhosted.org/packages/03/ce/1e1ce2558f65244057c0c40c60ade4dfa3767da3522bf1dd8679507ad7ba/litellm-1.100.0.tar.gz"
-    sha256 "ece94e817a453a5b3a9517c03547c428d501cea719edb728c1b260e53f78ea35"
+    url "https://files.pythonhosted.org/packages/9f/c7/ee8afd6fa316c24bd328f1c3ed6aaaac87ef425b3540a68c10c9eefcee4f/litellm-1.100.3.tar.gz"
+    sha256 "22bb00fc82e5197df7484b81a1e70c8a71452993b4ad0d903ee29780f2b36630"
   end
 
   resource "markdown-it-py" do
@@ -239,8 +239,8 @@ class Korvid < Formula
   end
 
   resource "multidict" do
-    url "https://files.pythonhosted.org/packages/1a/c2/c2d94cbe6ac1753f3fc980da97b3d930efe1da3af3c9f5125354436c073d/multidict-6.7.1.tar.gz"
-    sha256 "ec6652a1bee61c53a3e5776b6049172c53b6aaba34f18c9ad04f82712bac623d"
+    url "https://files.pythonhosted.org/packages/d6/99/1d4d69c3512d0ddbfa3a1b69cfd9a151012ab2eb4eabbb096201b1f0b7d8/multidict-6.9.1.tar.gz"
+    sha256 "0f06e60fa190aa7abd0914c2a766736fdc8e9f34878c4346338534b73d1b20e2"
   end
 
   resource "openai" do
@@ -309,8 +309,8 @@ class Korvid < Formula
   end
 
   resource "regex" do
-    url "https://files.pythonhosted.org/packages/b9/5c/f403115361de25809e8f785686ec7096e30fef73be9ae35aa51da4e80abb/regex-2026.9.10.tar.gz"
-    sha256 "1e321e2c84f0e52c457f5ea5944f796d6e8e09cb99738ea98dcc1bfe402a128d"
+    url "https://files.pythonhosted.org/packages/fc/f2/af1da9d3ceed77bfcdce40427d49ba0be94e4fe84245e3bfef68c10e75b6/regex-2026.9.29.tar.gz"
+    sha256 "8b5fcc4771732191b2b7d1dd68d8f0353f47f8d90b6150f6dce58bf1112442cb"
   end
 
   resource "requests" do
@@ -384,8 +384,8 @@ class Korvid < Formula
   end
 
   resource "urllib3" do
-    url "https://files.pythonhosted.org/packages/53/0c/06f8b233b8fd13b9e5ee11424ef85419ba0d8ba0b3138bf360be2ff56953/urllib3-2.7.0.tar.gz"
-    sha256 "231e0ec3b63ceb14667c67be60f2f2c40a518cb38b03af60abc813da26505f4c"
+    url "https://files.pythonhosted.org/packages/e3/05/b17359e1cefb4f909b5e40b1b90a496d987258916dbbf88e842c729f510e/urllib3-2.8.0.tar.gz"
+    sha256 "63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63"
   end
 
   resource "yarl" do
@@ -407,7 +407,7 @@ class Korvid < Formula
   end
 
   test do
-    assert_match "0.5.0", shell_output("#{bin}/korvid --version")
+    assert_match "0.6.0", shell_output("#{bin}/korvid --version")
     # Use bundled model metadata during the import smoke test.
     ENV["LITELLM_LOCAL_MODEL_COST_MAP"] = "true"
     system libexec/"bin/python", "-I", "-c",
