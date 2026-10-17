@@ -30,9 +30,13 @@ def formula_python(metadata: object) -> str:
 
 
 def prepare_formula_python(formula: str) -> str:
-    """Install and link only the selected interpreter, propagating failures."""
+    """Prepare CI dependency links and the selected Python, propagating failures."""
     output = subprocess.check_output(["brew", "info", "--json=v2", formula], text=True)
     python_formula = formula_python(json.loads(output))
+    installed = subprocess.check_output(["brew", "list", "--formula"], text=True)
+    if "openssl@1.1" in installed.splitlines():
+        # Hosted Intel images can retain aliases that block openssl@3 installation.
+        subprocess.run(["brew", "unlink", "openssl@1.1"], check=True)
     subprocess.run(["brew", "install", "--overwrite", "--verbose", python_formula], check=True)
     subprocess.run(["brew", "link", "--overwrite", python_formula], check=True)
     return python_formula
