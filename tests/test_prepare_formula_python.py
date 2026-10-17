@@ -38,16 +38,23 @@ class PrepareFormulaPythonTests(unittest.TestCase):
                 self.assertFalse((prefix / "bin/c_rehash").is_symlink())
 
     def test_preserves_nonlegacy_links_and_regular_files(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            prefix = Path(directory)
-            (prefix / "bin").mkdir()
-            openssl = prefix / "bin/openssl"
-            openssl.symlink_to("../opt/openssl@3/bin/openssl")
-            rehash = prefix / "bin/c_rehash"
-            rehash.write_text("owned by user")
-            self.module.remove_legacy_openssl_aliases(prefix)
-            self.assertTrue(openssl.is_symlink())
-            self.assertEqual(rehash.read_text(), "owned by user")
+        for name in ("openssl", "c_rehash"):
+            for kind in ("symlink", "file"):
+                with self.subTest(name=name, kind=kind), tempfile.TemporaryDirectory() as directory:
+                    prefix = Path(directory)
+                    (prefix / "bin").mkdir()
+                    alias = prefix / "bin" / name
+                    if kind == "symlink":
+                        target = Path("../opt/openssl@3/bin") / name
+                        alias.symlink_to(target)
+                    else:
+                        alias.write_text("owned by user")
+                    self.module.remove_legacy_openssl_aliases(prefix)
+                    if kind == "symlink":
+                        self.assertTrue(alias.is_symlink())
+                        self.assertEqual(alias.readlink(), target)
+                    else:
+                        self.assertEqual(alias.read_text(), "owned by user")
 
     def test_alias_unlink_error_is_not_suppressed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -123,9 +130,17 @@ class PrepareFormulaPythonTests(unittest.TestCase):
             with patch.object(
                 self.module.subprocess, "check_output",
                 side_effect=[metadata, "openssl@1.1\nopenssl@3\n", str(prefix) + "\n"],
-            ):
+            ) as info:
                 with patch.object(self.module.subprocess, "run", side_effect=execute) as run:
                     result = self.module.prepare_formula_python("hellices/korvid/korvid")
+            self.assertEqual(
+                info.call_args_list,
+                [
+                    call(["brew", "info", "--json=v2", "hellices/korvid/korvid"], text=True),
+                    call(["brew", "list", "--formula"], text=True),
+                    call(["brew", "--prefix"], text=True),
+                ],
+            )
             self.assertFalse(openssl.is_symlink())
         self.assertEqual(result, "python@3.13")
         self.assertEqual(
@@ -167,10 +182,11 @@ class PrepareFormulaPythonTests(unittest.TestCase):
                 with patch.object(
                     self.module.subprocess, "check_output",
                     side_effect=[metadata, "openssl@1.1\n", prefix],
-                ):
+                ) as info:
                     with patch.object(self.module.subprocess, "run") as run:
                         with self.assertRaisesRegex(ValueError, "Homebrew prefix"):
                             self.module.prepare_formula_python("hellices/korvid/korvid")
+                self.assertEqual(info.call_args_list[-1], call(["brew", "--prefix"], text=True))
                 run.assert_called_once_with(["brew", "unlink", "openssl@1.1"], check=True)
 
     def test_prefix_lookup_failure_blocks_python_install(self) -> None:
@@ -179,10 +195,11 @@ class PrepareFormulaPythonTests(unittest.TestCase):
         with patch.object(
             self.module.subprocess, "check_output",
             side_effect=[metadata, "openssl@1.1\n", failure],
-        ):
+        ) as info:
             with patch.object(self.module.subprocess, "run") as run:
                 with self.assertRaisesRegex(subprocess.CalledProcessError, "non-zero"):
                     self.module.prepare_formula_python("hellices/korvid/korvid")
+        self.assertEqual(info.call_args_list[-1], call(["brew", "--prefix"], text=True))
         run.assert_called_once_with(["brew", "unlink", "openssl@1.1"], check=True)
 
     def test_install_failure_does_not_attempt_linking(self) -> None:
