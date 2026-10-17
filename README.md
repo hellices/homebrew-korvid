@@ -168,7 +168,11 @@ entering build-bottle mode, so missing upstream dependency bottles can be built
 from source without changing versions or bypassing dependency checks.
 It first unlinks `openssl@1.1` when installed on the disposable runner: its
 legacy aliases can block installation of Python's `openssl@3` dependency on
-hosted Intel images. It does not uninstall the old formula, and any listing or
+hosted Intel images. Because `brew unlink` can report zero removals while stale
+aliases remain, the helper also removes `bin/openssl` and `bin/c_rehash` symlinks
+only when they target the same-named file under that prefix's
+`opt/openssl@1.1/bin`. Other links and regular files are preserved.
+It does not uninstall the old formula, and any listing, prefix lookup, or
 unlink failure stops preparation. It then installs and links the formula's
 selected Homebrew Python to replace conflicting Python.org aliases on hosted
 CI images. Overwrite is scoped to that

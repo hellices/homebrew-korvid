@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
+from pathlib import Path
 
 
 def formula_python(metadata: object) -> str:
@@ -29,6 +31,18 @@ def formula_python(metadata: object) -> str:
     return names[0]
 
 
+def remove_legacy_openssl_aliases(prefix: Path) -> None:
+    """Remove only stale bin aliases targeting the legacy OpenSSL opt path."""
+    for name in ("openssl", "c_rehash"):
+        alias = prefix / "bin" / name
+        if not alias.is_symlink():
+            continue
+        target = Path(os.path.abspath(alias.parent / alias.readlink()))
+        if target == prefix / "opt/openssl@1.1/bin" / name:
+            print(f"Removing legacy OpenSSL alias: {alias}", flush=True)
+            alias.unlink()
+
+
 def prepare_formula_python(formula: str) -> str:
     """Prepare CI dependency links and the selected Python, propagating failures."""
     output = subprocess.check_output(["brew", "info", "--json=v2", formula], text=True)
@@ -37,6 +51,10 @@ def prepare_formula_python(formula: str) -> str:
     if "openssl@1.1" in installed.splitlines():
         # Hosted Intel images can retain aliases that block openssl@3 installation.
         subprocess.run(["brew", "unlink", "openssl@1.1"], check=True)
+        prefix = Path(subprocess.check_output(["brew", "--prefix"], text=True).strip())
+        if not prefix.is_absolute() or prefix == Path("/"):
+            raise ValueError("Expected an absolute non-root Homebrew prefix")
+        remove_legacy_openssl_aliases(prefix)
     subprocess.run(["brew", "install", "--overwrite", "--verbose", python_formula], check=True)
     subprocess.run(["brew", "link", "--overwrite", python_formula], check=True)
     return python_formula
@@ -49,7 +67,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         python_formula = prepare_formula_python(args.formula)
-    except (ValueError, subprocess.CalledProcessError) as exc:
+    except (ValueError, OSError, subprocess.CalledProcessError) as exc:
         parser.error(str(exc))
     print(f"Prepared {python_formula} for {args.formula}")
     return 0
