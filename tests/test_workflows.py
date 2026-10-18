@@ -255,7 +255,8 @@ class TestBottlesWorkflow(unittest.TestCase):
         names = [step.get("name") for step in steps]
         self.assertLess(names.index("Install declared runtime"), names.index("Save runtime Cellar"))
         scripts = "\n".join(step.get("run", "") for step in steps)
-        self.assertIn("brew link --overwrite --force", scripts)
+        self.assertIn('brew link --overwrite "$formula"', scripts)
+        self.assertNotIn("brew link --overwrite --force", scripts)
         self.assertIn("brew postinstall", scripts)
         self.assertLess(
             scripts.index("Missing restored opt link"),
@@ -295,7 +296,10 @@ class TestBottlesWorkflow(unittest.TestCase):
         brew = """
 brew() {
   case "$1" in
-    list) printf 'python@3.13\\nsqlite\\n' ;;
+    list)
+      [ "$*" = "list --formula" ] || return 2
+      printf 'python@3.13\\nsqlite\\n'
+      ;;
     --prefix) printf '%s/%s\\n' "$TEST_PREFIX" "$2" ;;
     link|postinstall) printf 'hook:%s\\n' "$*" ;;
     *) return 2 ;;
