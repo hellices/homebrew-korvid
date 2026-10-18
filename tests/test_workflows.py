@@ -216,7 +216,9 @@ class TestBottlesWorkflow(unittest.TestCase):
             cache["uses"],
             "./.github/actions/cache-homebrew-runtime",
         )
-        scripts = "\n".join(step.get("run", "") for step in steps)
+        action_path = TEST_WORKFLOW.parents[1] / "actions/cache-homebrew-runtime/action.yml"
+        action_steps = load_workflow(action_path)["runs"]["steps"]
+        scripts = "\n".join(step.get("run", "") for step in [*steps, *action_steps])
         self.assertIn("brew bundle check --file=Brewfile", scripts)
         self.assertIn("Dependency cache must not contain an installed korvid.", scripts)
         self.assertNotIn("brew install", scripts)
@@ -224,11 +226,29 @@ class TestBottlesWorkflow(unittest.TestCase):
         self.assertNotIn("brew bottle", scripts)
 
     def test_runtime_only_rejects_application_reinstallation(self):
+        loader = load_workflow
         for name in ("korvid", "hellices/korvid/korvid"):
             with self.subTest(name=name):
                 wf = load_workflow(TEST_WORKFLOW)
                 wf["jobs"]["runtime"]["steps"].append({"run": f"brew reinstall {name}"})
-                with patch(f"{__name__}.load_workflow", return_value=wf):
+                with patch(
+                    f"{__name__}.load_workflow",
+                    side_effect=lambda path: wf if path == TEST_WORKFLOW else loader(path),
+                ):
+                    with self.assertRaisesRegex(AssertionError, "unexpectedly found"):
+                        self.test_runtime_cache_can_be_verified_without_rebuilding_the_application()
+
+    def test_runtime_only_rejects_composite_application_installation(self):
+        path = TEST_WORKFLOW.parents[1] / "actions/cache-homebrew-runtime/action.yml"
+        loader = load_workflow
+        for command in ("brew install korvid", "brew reinstall hellices/korvid/korvid"):
+            with self.subTest(command=command):
+                action = load_workflow(path)
+                action["runs"]["steps"].append({"run": command})
+                with patch(
+                    f"{__name__}.load_workflow",
+                    side_effect=lambda target: action if target == path else loader(target),
+                ):
                     with self.assertRaisesRegex(AssertionError, "unexpectedly found"):
                         self.test_runtime_cache_can_be_verified_without_rebuilding_the_application()
 
@@ -242,11 +262,16 @@ class TestBottlesWorkflow(unittest.TestCase):
         self.assertIn("brew deps --union --include-build --formula", ids["plan"]["run"])
         self.assertIn("brew test-bot --only-cleanup-before", ids["plan"]["run"])
         self.assertIn("hashFiles('Brewfile')", ids["plan"]["run"])
+        key_line = next(
+            line for line in ids["plan"]["run"].splitlines() if line.startswith('echo "key=')
+        )
+        self.assertIn('$versions" >> "$GITHUB_OUTPUT"', key_line)
         self.assertTrue(ids["lookup"]["with"]["lookup-only"])
         restore = ids["restore"]
         self.assertEqual(restore["if"], "steps.lookup.outputs.cache-hit == 'true'")
         self.assertTrue(restore["with"]["fail-on-cache-miss"])
         for cache in (ids["lookup"], restore, ids["save"]):
+            self.assertEqual(cache["with"]["key"], "${{ steps.plan.outputs.key }}")
             self.assertEqual(cache["with"]["path"].strip().splitlines(), [
                 "${{ steps.plan.outputs.cellar }}",
                 "${{ steps.plan.outputs.opt }}",
