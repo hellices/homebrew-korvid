@@ -194,8 +194,12 @@ before the cache is saved: neither korvid nor the tap's Rust toolchain is
 cached. The current tap checkout is reattached after restoration, and an
 unexpected cached korvid installation fails the job rather than skipping tests.
 Normal dependency checks, source builds, native tests, and both bottle tests
-still run. Restricted-network bottle tests restore dependencies after blocking
-the PyPI file host, then purge any cached korvid download before installation.
+still run. Bottle tests prepare the runtime first, reject an installed korvid,
+and purge cached korvid downloads. They then block the PyPI file host, check the
+prepared Brewfile dependencies without installing anything, and verify that
+korvid is actually poured from its published bottle. This qualifies the
+application on a prepared runtime, not a cold/offline bootstrap of Python:
+Intel Python source builds can themselves need pip resources from PyPI.
 
 A cold cache still builds unavailable upstream dependency bottles from source;
 a warm cache avoids repeating that preparation, not the korvid source build.

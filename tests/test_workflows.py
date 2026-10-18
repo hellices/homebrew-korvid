@@ -97,17 +97,26 @@ class TestBottlesWorkflow(unittest.TestCase):
         self.assertNotIn("if", install)
         self.assertIn("--build-from-source", install["run"])
 
-    def test_bottle_cache_restore_stays_inside_network_restriction(self):
-        _steps, names, cache = self._runtime_cache(TEST_WORKFLOW, "test-bottle")
+    def test_bottle_runtime_is_staged_then_verified_under_network_restriction(self):
+        steps, names, cache = self._runtime_cache(TEST_WORKFLOW, "test-bottle")
         self.assertIn("steps.bottle_check.outputs.skip == 'false'", cache["if"])
         self.assertLess(
-            names.index("Block files.pythonhosted.org"), names.index("Restore Homebrew runtime")
+            names.index("Restore Homebrew runtime"), names.index("Block files.pythonhosted.org")
         )
         self.assertLess(
             names.index("Restore Homebrew runtime"), names.index("Retap current checkout")
         )
         self.assertLess(names.index("Retap current checkout"), names.index("Remove cached Korvid archive"))
         self.assertLess(names.index("Remove cached Korvid archive"), names.index("Install bottle"))
+        self.assertLess(
+            names.index("Block files.pythonhosted.org"), names.index("Check prepared runtime offline")
+        )
+        self.assertLess(names.index("Check prepared runtime offline"), names.index("Install bottle"))
+        offline = steps[names.index("Check prepared runtime offline")]
+        self.assertEqual(offline["run"].strip().splitlines(), [
+            "set -euo pipefail", "brew bundle check --file=Brewfile",
+        ])
+        self.assertEqual(offline["env"]["HOMEBREW_NO_AUTO_UPDATE"], "1")
 
     def test_cached_application_is_rejected_after_restoring_runtime(self):
         for workflow, job, retap in (
