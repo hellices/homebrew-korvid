@@ -161,6 +161,8 @@ Intel macOS builds use the build-only, keg-only `korvid-rust` formula in this
 tap. It installs the official Rust 1.99.1 compiler, Cargo, and standard-library
 binaries, pinned by SHA-256 from Rust's release manifest. It does not compile
 Rust or LLVM, use an unversioned rustup default, or replace the user's toolchain.
+It preserves upstream `@rpath` install names: the prebuilt Mach-O headers cannot
+hold longer absolute keg paths. Normal linkage checks are not disabled.
 ARM macOS and Linux continue to use Homebrew's `rust` build dependency.
 The bottle workflow tests the Intel compiler before building korvid; normal
 Homebrew dependency checks and korvid's native-extension tests remain enabled.

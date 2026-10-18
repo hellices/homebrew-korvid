@@ -54,3 +54,9 @@ class PrebuiltRustTests(unittest.TestCase):
             ["ruby", "-c", str(FORMULA)], capture_output=True, text=True, check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_upstream_rpath_is_preserved_without_skipping_linkage_checks(self) -> None:
+        text = self.formula()
+        self.assertRegex(text, r"(?m)^  preserve_rpath$")
+        self.assertNotIn("skip_relocation", text)
+        self.assertNotIn("skip_clean", text)

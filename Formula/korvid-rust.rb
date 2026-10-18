@@ -10,8 +10,11 @@ class KorvidRust < Formula
 
   keg_only "it is a private build toolchain for korvid"
 
+  # Upstream dylibs have no header space for longer absolute install names.
   depends_on arch: :x86_64
   depends_on :macos
+
+  preserve_rpath
 
   resource "cargo" do
     url "https://static.rust-lang.org/dist/2026-10-15/cargo-1.99.1-x86_64-apple-darwin.tar.xz"
