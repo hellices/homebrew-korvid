@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import subprocess
 import unittest
 from functools import lru_cache
 from pathlib import Path
+from unittest.mock import patch
 
 BOTTLES_WORKFLOW = Path(__file__).parent.parent / ".github" / "workflows" / "bottles.yml"
 TEST_WORKFLOW = Path(__file__).parent.parent / ".github" / "workflows" / "test.yml"
@@ -78,6 +80,12 @@ class TestBottlesWorkflow(unittest.TestCase):
             "set -euo pipefail",
             "brew bundle --file=Brewfile",
         ])
+        retap = {
+            "build": "Set up Homebrew tap",
+            "test": "Tap this checkout",
+            "test-bottle": "Retap current checkout",
+        }[job]
+        self.assertLess(names.index(bundle["name"]), names.index(retap))
         return steps, names, cache
 
     def test_runtime_is_cached_before_build_and_current_checkout_is_retapped(self):
@@ -132,6 +140,36 @@ class TestBottlesWorkflow(unittest.TestCase):
                 self.assertIn('installed="$(brew list --formula)"', run)
                 self.assertIn("grep -Fxq korvid", run)
                 self.assertIn("exit 1", run)
+                guard = run[run.index('installed="$(brew list --formula)"'):]
+                for installed, exit_code in (
+                    ("libyaml\npython@3.13\n", 0),
+                    ("korvid-rust\npython@3.13\n", 0),
+                    ("korvid\npython@3.13\n", 1),
+                ):
+                    result = subprocess.run(
+                        ["bash", "-euo", "pipefail", "-c",
+                         'brew() { printf "%s" "$FORMULAE"; }\n' + guard],
+                        env={**os.environ, "FORMULAE": installed},
+                        text=True, capture_output=True, check=False,
+                    )
+                    self.assertEqual(result.returncode, exit_code, result.stdout + result.stderr)
+
+    def test_late_image_runtime_preparation_is_rejected(self):
+        for workflow, job, install in (
+            (BOTTLES_WORKFLOW, "build", "Install (build-bottle mode)"),
+            (TEST_WORKFLOW, "test", "Install from source"),
+            (TEST_WORKFLOW, "test-bottle", "Install bottle"),
+        ):
+            with self.subTest(job=job):
+                wf = load_workflow(workflow)
+                steps = wf["jobs"][job]["steps"]
+                bundle = next(step for step in steps if step.get("name") == "Prepare Homebrew runtime")
+                steps.remove(bundle)
+                index = next(i for i, step in enumerate(steps) if step.get("name") == install)
+                steps.insert(index + 1, bundle)
+                with patch(f"{__name__}.load_workflow", return_value=wf):
+                    with self.assertRaisesRegex(AssertionError, "not less"):
+                        self._runtime_cache(workflow, job)
 
     def test_only_superseded_pr_tests_are_cancelled(self):
         wf = load_workflow(TEST_WORKFLOW)

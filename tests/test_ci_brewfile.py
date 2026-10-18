@@ -9,6 +9,13 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 
 
+def runtime_dependencies(formula: str) -> set[str]:
+    return set(re.findall(
+        r"""^[ \t]+depends_on[ \t]+["']([^"']+)["'][ \t]*(?:#.*)?$""",
+        formula, re.MULTILINE,
+    ))
+
+
 class CIBrewfileTests(unittest.TestCase):
     def test_cache_contains_only_core_runtime_and_overwrites_known_alias_conflicts(self) -> None:
         brewfile = ROOT / "Brewfile"
@@ -25,10 +32,20 @@ class CIBrewfileTests(unittest.TestCase):
             ["python@3.13", {"args": ["overwrite"], "link": "overwrite"}],
             ["libyaml", {}],
         ])
-        runtime = re.findall(
-            r'^  depends_on "([^"]+)"$', (ROOT / "Formula/korvid.rb").read_text(), re.MULTILINE,
+        self.assertEqual(
+            {name for name, _options in entries},
+            runtime_dependencies((ROOT / "Formula/korvid.rb").read_text()),
         )
-        self.assertEqual({name for name, _options in entries}, set(runtime))
+
+    def test_runtime_dependency_indentation_does_not_hide_new_packages(self) -> None:
+        formula = (ROOT / "Formula/korvid.rb").read_text()
+        for indent in (" ", "    ", "\t"):
+            with self.subTest(indent=indent):
+                mutated = formula.replace(
+                    '  depends_on "libyaml"',
+                    f'  depends_on "libyaml"\n{indent}depends_on "readline"',
+                )
+                self.assertIn("readline", runtime_dependencies(mutated))
 
     def test_duplicate_manual_python_installer_is_removed(self) -> None:
         self.assertFalse((ROOT / "scripts/prepare_formula_python.py").exists())
