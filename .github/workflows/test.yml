@@ -42,11 +42,18 @@ jobs:
         uses: Homebrew/actions/setup-homebrew@a657b8b0cd35d0f65cce41fce9b24cf054b49869  # master
 
       - name: Restore Homebrew runtime
+        if: ${{ runner.os == 'macOS' && runner.arch == 'X64' }}
         uses: Homebrew/actions/cache-homebrew-prefix@a657b8b0cd35d0f65cce41fce9b24cf054b49869
         with:
           brewfile: true
           uninstall: true
           workflow-key: korvid-runtime-v1-${{ hashFiles('Brewfile') }}
+
+      - name: Prepare Homebrew runtime
+        if: ${{ (runner.os != 'macOS' || runner.arch != 'X64') }}
+        run: |
+          set -euo pipefail
+          brew bundle --file=Brewfile
 
       # brew refuses `audit`/`install` by path; the formula has to be
       # reached through a tap. Tapping this checkout is what a user's
@@ -222,12 +229,18 @@ jobs:
           grep -Fxq "::1 files.pythonhosted.org" /etc/hosts
 
       - name: Restore Homebrew runtime
-        if: steps.bottle_check.outputs.skip == 'false'
+        if: ${{ steps.bottle_check.outputs.skip == 'false' && runner.os == 'macOS' && runner.arch == 'X64' }}
         uses: Homebrew/actions/cache-homebrew-prefix@a657b8b0cd35d0f65cce41fce9b24cf054b49869
         with:
           brewfile: true
           uninstall: true
           workflow-key: korvid-runtime-v1-${{ hashFiles('Brewfile') }}
+
+      - name: Prepare Homebrew runtime
+        if: ${{ steps.bottle_check.outputs.skip == 'false' && (runner.os != 'macOS' || runner.arch != 'X64') }}
+        run: |
+          set -euo pipefail
+          brew bundle --file=Brewfile
 
       - name: Retap current checkout
         if: steps.bottle_check.outputs.skip == 'false'

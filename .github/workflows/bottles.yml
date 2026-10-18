@@ -128,11 +128,18 @@ jobs:
         uses: Homebrew/actions/setup-homebrew@a657b8b0cd35d0f65cce41fce9b24cf054b49869  # master
 
       - name: Restore Homebrew runtime
+        if: ${{ runner.os == 'macOS' && runner.arch == 'X64' }}
         uses: Homebrew/actions/cache-homebrew-prefix@a657b8b0cd35d0f65cce41fce9b24cf054b49869
         with:
           brewfile: true
           uninstall: true
           workflow-key: korvid-runtime-v1-${{ hashFiles('Brewfile') }}
+
+      - name: Prepare Homebrew runtime
+        if: ${{ (runner.os != 'macOS' || runner.arch != 'X64') }}
+        run: |
+          set -euo pipefail
+          brew bundle --file=Brewfile
 
       - name: Set up Homebrew tap
         run: |

@@ -177,11 +177,14 @@ from the `uv.lock` the corresponding korvid release was tested against, by
 in the main repository. The release workflow opens the bump here
 automatically; do not edit the formula by hand.
 
-CI uses the SHA-pinned official `Homebrew/actions/cache-homebrew-prefix` action
-and the CI-only `Brewfile` for Python, OpenSSL, and libyaml preparation.
+CI uses Homebrew Bundle and the CI-only `Brewfile` for Python, OpenSSL, and libyaml
+preparation. Intel macOS also uses the SHA-pinned official
+`Homebrew/actions/cache-homebrew-prefix` action to reuse its expensive runtime
+build. ARM macOS and Linux keep their preinstalled Homebrew environment and
+run Bundle directly, avoiding an unnecessary whole-prefix transfer.
 Homebrew Bundle handles installation and link overwrites for Python/OpenSSL;
 there is no separate Python installer or alias-removal script.
-The action cleans existing formulae on the **disposable hosted runner** before
+The cache action cleans existing formulae on the **disposable Intel hosted runner** before
 restoring its prefix cache. Do not use this cleanup workflow on a workstation
 or a shared/self-hosted runner.
 

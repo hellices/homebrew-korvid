@@ -65,6 +65,19 @@ class TestBottlesWorkflow(unittest.TestCase):
         self.assertEqual(cache["with"]["brewfile"], True)
         self.assertEqual(cache["with"]["uninstall"], True)
         self.assertIn("hashFiles('Brewfile')", cache["with"]["workflow-key"])
+        prefix = "steps.bottle_check.outputs.skip == 'false' && " if job == "test-bottle" else ""
+        self.assertEqual(
+            cache["if"], "${{ " + prefix + "runner.os == 'macOS' && runner.arch == 'X64' }}",
+        )
+        bundle = steps[names.index("Prepare Homebrew runtime")]
+        self.assertEqual(
+            bundle["if"],
+            "${{ " + prefix + "(runner.os != 'macOS' || runner.arch != 'X64') }}",
+        )
+        self.assertEqual(bundle["run"].strip().splitlines(), [
+            "set -euo pipefail",
+            "brew bundle --file=Brewfile",
+        ])
         return steps, names, cache
 
     def test_runtime_is_cached_before_build_and_current_checkout_is_retapped(self):
@@ -86,7 +99,7 @@ class TestBottlesWorkflow(unittest.TestCase):
 
     def test_bottle_cache_restore_stays_inside_network_restriction(self):
         _steps, names, cache = self._runtime_cache(TEST_WORKFLOW, "test-bottle")
-        self.assertEqual(cache["if"], "steps.bottle_check.outputs.skip == 'false'")
+        self.assertIn("steps.bottle_check.outputs.skip == 'false'", cache["if"])
         self.assertLess(
             names.index("Block files.pythonhosted.org"), names.index("Restore Homebrew runtime")
         )
