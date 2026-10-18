@@ -62,11 +62,8 @@ class TestBottlesWorkflow(unittest.TestCase):
         cache = steps[names.index("Restore Homebrew runtime")]
         self.assertEqual(
             cache["uses"],
-            "Homebrew/actions/cache-homebrew-prefix@a657b8b0cd35d0f65cce41fce9b24cf054b49869",
+            "./.github/actions/cache-homebrew-runtime",
         )
-        self.assertEqual(cache["with"]["brewfile"], True)
-        self.assertEqual(cache["with"]["uninstall"], True)
-        self.assertIn("hashFiles('Brewfile')", cache["with"]["workflow-key"])
         prefix = "steps.bottle_check.outputs.skip == 'false' && " if job == "test-bottle" else ""
         self.assertEqual(
             cache["if"], "${{ " + prefix + "runner.os == 'macOS' && runner.arch == 'X64' }}",
@@ -215,17 +212,37 @@ class TestBottlesWorkflow(unittest.TestCase):
         cache = next(step for step in steps if step.get("name") == "Restore Homebrew runtime")
         self.assertEqual(
             cache["uses"],
-            "Homebrew/actions/cache-homebrew-prefix@a657b8b0cd35d0f65cce41fce9b24cf054b49869",
+            "./.github/actions/cache-homebrew-runtime",
         )
-        self.assertEqual(cache["with"], {
-            "brewfile": True, "uninstall": True,
-            "workflow-key": "korvid-runtime-v1-${{ hashFiles('Brewfile') }}",
-        })
         scripts = "\n".join(step.get("run", "") for step in steps)
         self.assertIn("brew bundle check --file=Brewfile", scripts)
         self.assertIn("Dependency cache must not contain an installed korvid.", scripts)
         self.assertNotIn("brew install", scripts)
         self.assertNotIn("brew bottle", scripts)
+
+    def test_cache_is_cellar_only_and_cannot_hide_restore_failure(self):
+        path = TEST_WORKFLOW.parents[1] / "actions/cache-homebrew-runtime/action.yml"
+        self.assertTrue(path.is_file())
+        steps = load_workflow(path)["runs"]["steps"]
+        ids = {step.get("id"): step for step in steps}
+        self.assertIn("brew --cellar", ids["plan"]["run"])
+        self.assertIn("brew test-bot --only-cleanup-before", ids["plan"]["run"])
+        self.assertIn("hashFiles('Brewfile')", ids["plan"]["run"])
+        self.assertTrue(ids["lookup"]["with"]["lookup-only"])
+        restore = ids["restore"]
+        self.assertEqual(restore["if"], "steps.lookup.outputs.cache-hit == 'true'")
+        self.assertTrue(restore["with"]["fail-on-cache-miss"])
+        for cache in (ids["lookup"], restore, ids["save"]):
+            self.assertEqual(cache["with"]["path"], "${{ steps.plan.outputs.cellar }}")
+            self.assertIn("@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", cache["uses"])
+        names = [step.get("name") for step in steps]
+        self.assertLess(names.index("Install declared runtime"), names.index("Save runtime Cellar"))
+        scripts = "\n".join(step.get("run", "") for step in steps)
+        self.assertIn("brew link --overwrite --force", scripts)
+        self.assertIn("brew postinstall", scripts)
+        self.assertIn('"$python" -Im venv', scripts)
+        self.assertIn("import pip, ssl, sqlite3, zlib", scripts)
+        self.assertNotIn("chown", scripts)
 
     def test_dependencies_are_installed_before_build_bottle_mode(self):
         wf = load_workflow(BOTTLES_WORKFLOW)

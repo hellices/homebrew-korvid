@@ -179,19 +179,27 @@ automatically; do not edit the formula by hand.
 
 CI uses Homebrew Bundle and the CI-only `Brewfile` for Python, OpenSSL, and libyaml
 preparation. Intel macOS also uses the SHA-pinned official
-`Homebrew/actions/cache-homebrew-prefix` action to reuse its expensive runtime
-build. ARM macOS and Linux keep their preinstalled Homebrew environment and
+`actions/cache` restore/save actions to reuse its expensive runtime build.
+Only Homebrew's managed `Cellar` is archived; the entire `/usr/local` prefix
+would include unrelated, root-owned runner tools and cannot reliably restore.
+ARM macOS and Linux keep their preinstalled Homebrew environment and
 run Bundle directly, avoiding an unnecessary whole-prefix transfer.
 Homebrew Bundle handles installation and link overwrites for Python/OpenSSL;
 there is no separate Python installer or alias-removal script.
-The cache action cleans existing formulae on the **disposable Intel hosted runner** before
-restoring its prefix cache. Do not use this cleanup workflow on a workstation
+The runtime action uses Homebrew's standard cleanup on the **disposable Intel
+hosted runner** before restoring cached kegs. It then uses `brew link` and
+`brew postinstall` to reconstruct runtime links and configuration, rather than
+caching unrelated runner files or changing their ownership.
+Do not use this cleanup workflow on a workstation
 or a shared/self-hosted runner.
 
-Cache identity includes OS/architecture, the Brewfile, and the action's available
-formula version/revision hash. Only core runtime dependencies are installed
+Cache identity includes OS/architecture, the Brewfile, and the available
+runtime formula version/revision hash. Only core runtime dependencies are installed
 before the cache is saved: neither korvid nor the tap's Rust toolchain is
-cached. The current tap checkout is reattached after restoration, and an
+cached. An exact-key lookup precedes restoration; a known cache that fails to
+restore is an error, not a silent partial-cache fallback. A Python venv/import
+probe verifies restored runtime usability before saving. The current tap checkout
+is reattached after restoration, and an
 unexpected cached korvid installation fails the job rather than skipping tests.
 Normal dependency checks, source builds, native tests, and both bottle tests
 still run. Bottle tests prepare the runtime first, reject an installed korvid,

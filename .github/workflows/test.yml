@@ -34,11 +34,7 @@ jobs:
       - name: Set up Homebrew
         uses: Homebrew/actions/setup-homebrew@a657b8b0cd35d0f65cce41fce9b24cf054b49869
       - name: Restore Homebrew runtime
-        uses: Homebrew/actions/cache-homebrew-prefix@a657b8b0cd35d0f65cce41fce9b24cf054b49869
-        with:
-          brewfile: true
-          uninstall: true
-          workflow-key: korvid-runtime-v1-${{ hashFiles('Brewfile') }}
+        uses: ./.github/actions/cache-homebrew-runtime
       - name: Verify prepared runtime
         run: |
           set -euo pipefail
@@ -75,11 +71,7 @@ jobs:
 
       - name: Restore Homebrew runtime
         if: ${{ runner.os == 'macOS' && runner.arch == 'X64' }}
-        uses: Homebrew/actions/cache-homebrew-prefix@a657b8b0cd35d0f65cce41fce9b24cf054b49869
-        with:
-          brewfile: true
-          uninstall: true
-          workflow-key: korvid-runtime-v1-${{ hashFiles('Brewfile') }}
+        uses: ./.github/actions/cache-homebrew-runtime
 
       - name: Prepare Homebrew runtime
         if: ${{ (runner.os != 'macOS' || runner.arch != 'X64') }}
@@ -252,11 +244,7 @@ jobs:
 
       - name: Restore Homebrew runtime
         if: ${{ steps.bottle_check.outputs.skip == 'false' && runner.os == 'macOS' && runner.arch == 'X64' }}
-        uses: Homebrew/actions/cache-homebrew-prefix@a657b8b0cd35d0f65cce41fce9b24cf054b49869
-        with:
-          brewfile: true
-          uninstall: true
-          workflow-key: korvid-runtime-v1-${{ hashFiles('Brewfile') }}
+        uses: ./.github/actions/cache-homebrew-runtime
 
       - name: Prepare Homebrew runtime
         if: ${{ steps.bottle_check.outputs.skip == 'false' && (runner.os != 'macOS' || runner.arch != 'X64') }}
