@@ -203,6 +203,12 @@ Intel Python source builds can themselves need pip resources from PyPI.
 
 A cold cache still builds unavailable upstream dependency bottles from source;
 a warm cache avoids repeating that preparation, not the korvid source build.
+The **Test formula** workflow has an opt-in manual `runtime_cache_only` mode to
+prime or verify the same Intel cache without rebuilding korvid. Run it on `main`
+to make a cache available to subsequent PRs, or on a validation branch for a
+cold/warm comparison. This mode is not application qualification, never
+publishes artifacts, and has a 90-minute bound. PRs, schedules and ordinary
+dispatches still run all installation tests.
 Only superseded pull-request test runs are cancelled. Main-branch, scheduled,
 manual, and bottle-publication runs are not cancelled by this policy.
 Bottle build concurrency is scoped by branch and architecture, so a validation

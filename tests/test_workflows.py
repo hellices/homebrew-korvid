@@ -155,6 +155,40 @@ class TestBottlesWorkflow(unittest.TestCase):
             "bottles-publish-${{ needs.prepare.outputs.release_tag }}",
         )
 
+    def test_runtime_cache_can_be_verified_without_rebuilding_the_application(self):
+        wf = load_workflow(TEST_WORKFLOW)
+        events = wf.get("on", wf.get("true", {}))
+        option = events["workflow_dispatch"]["inputs"]["runtime_cache_only"]
+        self.assertEqual(option["type"], "boolean")
+        self.assertFalse(option["default"])
+        self.assertEqual(wf["permissions"], {"contents": "read"})
+        job = wf["jobs"]["runtime"]
+        self.assertEqual(
+            job["if"], "${{ github.event_name == 'workflow_dispatch' && inputs.runtime_cache_only }}",
+        )
+        for name in ("test", "test-bottle"):
+            self.assertEqual(
+                wf["jobs"][name]["if"],
+                "${{ github.event_name != 'workflow_dispatch' || !inputs.runtime_cache_only }}",
+            )
+        self.assertEqual(job["runs-on"], "macos-15-intel")
+        self.assertEqual(job["timeout-minutes"], 90)
+        steps = job["steps"]
+        cache = next(step for step in steps if step.get("name") == "Restore Homebrew runtime")
+        self.assertEqual(
+            cache["uses"],
+            "Homebrew/actions/cache-homebrew-prefix@a657b8b0cd35d0f65cce41fce9b24cf054b49869",
+        )
+        self.assertEqual(cache["with"], {
+            "brewfile": True, "uninstall": True,
+            "workflow-key": "korvid-runtime-v1-${{ hashFiles('Brewfile') }}",
+        })
+        scripts = "\n".join(step.get("run", "") for step in steps)
+        self.assertIn("brew bundle check --file=Brewfile", scripts)
+        self.assertIn("Dependency cache must not contain an installed korvid.", scripts)
+        self.assertNotIn("brew install", scripts)
+        self.assertNotIn("brew bottle", scripts)
+
     def test_dependencies_are_installed_before_build_bottle_mode(self):
         wf = load_workflow(BOTTLES_WORKFLOW)
         steps = wf["jobs"]["build"]["steps"]

@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      runtime_cache_only:
+        description: Prime or verify the Intel runtime cache without rebuilding korvid
+        type: boolean
+        default: false
   # A formula can break without anyone touching it: a yanked sdist or a
   # withdrawn upstream release is only visible from an actual build.
   schedule:
@@ -18,6 +23,32 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  runtime:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.runtime_cache_only }}
+    runs-on: macos-15-intel
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@a657b8b0cd35d0f65cce41fce9b24cf054b49869
+      - name: Restore Homebrew runtime
+        uses: Homebrew/actions/cache-homebrew-prefix@a657b8b0cd35d0f65cce41fce9b24cf054b49869
+        with:
+          brewfile: true
+          uninstall: true
+          workflow-key: korvid-runtime-v1-${{ hashFiles('Brewfile') }}
+      - name: Verify prepared runtime
+        run: |
+          set -euo pipefail
+          brew bundle check --file=Brewfile
+          installed="$(brew list --formula)"
+          if printf '%s\n' "$installed" | grep -Fxq korvid; then
+            echo "::error::Dependency cache must not contain an installed korvid."
+            exit 1
+          fi
+
   policy-tests:
     runs-on: ubuntu-latest
     steps:
@@ -28,6 +59,7 @@ jobs:
         run: python3 -S -m unittest discover -s tests -q
 
   test:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.runtime_cache_only }}
     strategy:
       fail-fast: false
       matrix:
@@ -98,6 +130,7 @@ jobs:
         run: korvid --version
 
   test-bottle:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.runtime_cache_only }}
     strategy:
       fail-fast: false
       matrix:
