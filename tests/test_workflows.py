@@ -134,6 +134,18 @@ class TestBottlesWorkflow(unittest.TestCase):
             wf["concurrency"]["cancel-in-progress"], "${{ github.event_name == 'pull_request' }}",
         )
 
+    def test_branch_validation_does_not_queue_behind_release_builds(self):
+        jobs = load_workflow(BOTTLES_WORKFLOW)["jobs"]
+        self.assertEqual(
+            jobs["build"]["concurrency"]["group"],
+            "bottles-${{ github.ref }}-${{ needs.prepare.outputs.release_tag }}-${{ matrix.tag }}",
+        )
+        self.assertFalse(jobs["build"]["concurrency"]["cancel-in-progress"])
+        self.assertEqual(
+            jobs["publish"]["concurrency"]["group"],
+            "bottles-publish-${{ needs.prepare.outputs.release_tag }}",
+        )
+
     def test_dependencies_are_installed_before_build_bottle_mode(self):
         wf = load_workflow(BOTTLES_WORKFLOW)
         steps = wf["jobs"]["build"]["steps"]

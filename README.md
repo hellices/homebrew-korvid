@@ -201,6 +201,9 @@ A cold cache still builds unavailable upstream dependency bottles from source;
 a warm cache avoids repeating that preparation, not the korvid source build.
 Only superseded pull-request test runs are cancelled. Main-branch, scheduled,
 manual, and bottle-publication runs are not cancelled by this policy.
+Bottle build concurrency is scoped by branch and architecture, so a validation
+branch does not wait for an unrelated main build. Actual publication retains
+its separate version-scoped lock and the main-only gate.
 Dispatching that workflow on a topic branch builds and tests artifacts only;
 release publication and the bottle metadata PR are restricted to `main`.
 Merging a bottle-workflow or Brewfile fix also triggers delivery.

@@ -107,7 +107,7 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.should_build == 'true'
     concurrency:
-      group: bottles-${{ needs.prepare.outputs.release_tag }}-${{ matrix.tag }}
+      group: bottles-${{ github.ref }}-${{ needs.prepare.outputs.release_tag }}-${{ matrix.tag }}
       cancel-in-progress: false
     strategy:
       fail-fast: false
