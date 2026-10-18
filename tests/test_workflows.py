@@ -133,6 +133,20 @@ class TestBottlesWorkflow(unittest.TestCase):
         self.assertEqual(events["push"]["branches"], ["main"])
         self.assertIn(".github/workflows/bottles.yml", events["push"]["paths"])
         self.assertIn("scripts/prepare_formula_python.py", events["push"]["paths"])
+        self.assertIn("Formula/korvid-rust.rb", events["push"]["paths"])
+
+    def test_intel_prebuilt_toolchain_is_tested_before_bottling(self):
+        steps = load_workflow(BOTTLES_WORKFLOW)["jobs"]["build"]["steps"]
+        names = [step.get("name") for step in steps]
+        self.assertIn("Test prebuilt Intel toolchain", names)
+        test = steps[names.index("Test prebuilt Intel toolchain")]
+        self.assertEqual(test["if"], "matrix.tag == 'sequoia'")
+        self.assertEqual(test["run"].strip().splitlines(), [
+            "set -euo pipefail",
+            "brew test hellices/korvid/korvid-rust",
+        ])
+        self.assertLess(names.index("Install build dependencies"), names.index(test["name"]))
+        self.assertLess(names.index(test["name"]), names.index("Install (build-bottle mode)"))
 
     def test_architecture_builds_do_not_cancel_each_other(self):
         wf = load_workflow(BOTTLES_WORKFLOW)

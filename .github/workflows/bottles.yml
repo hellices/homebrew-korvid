@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - Formula/korvid.rb
+      - Formula/korvid-rust.rb
       - .github/workflows/bottles.yml
       - scripts/prepare_formula_python.py
   workflow_dispatch:
@@ -148,6 +149,12 @@ jobs:
         run: |
           set -euo pipefail
           brew install --only-dependencies --verbose hellices/korvid/korvid
+
+      - name: Test prebuilt Intel toolchain
+        if: matrix.tag == 'sequoia'
+        run: |
+          set -euo pipefail
+          brew test hellices/korvid/korvid-rust
 
       - name: Install (build-bottle mode)
         run: |
