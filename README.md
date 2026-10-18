@@ -190,6 +190,8 @@ The runtime action uses Homebrew's standard cleanup on the **disposable Intel
 hosted runner** before restoring cached kegs. It then uses `brew link` and
 `brew postinstall` to reconstruct runtime links and configuration, rather than
 caching unrelated runner files or changing their ownership.
+Relinking follows Homebrew's normal keg-only policy; only the explicit Bundle
+settings control Python/OpenSSL link overrides.
 Do not use this cleanup workflow on a workstation
 or a shared/self-hosted runner.
 
