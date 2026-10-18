@@ -44,7 +44,10 @@ class PrebuiltRustTests(unittest.TestCase):
 
     def assert_no_compiler_dependency(self, text: str) -> None:
         for node in nodes(self.ruby_tree(text)):
-            if node and node[0] == "command" and tokens(node[1]) == ["depends_on"]:
+            if (
+                node and node[0] in ("command", "method_add_arg")
+                and tokens(node[1]) == ["depends_on"]
+            ):
                 for name in tokens(node[2]):
                     self.assertNotRegex(name, r"^(rust|llvm|rustup)(@.*)?$")
 
@@ -54,8 +57,12 @@ class PrebuiltRustTests(unittest.TestCase):
             if node and node[0] == "method_add_block" and tokens(node[1]) == ["test"]
         ]
         self.assertEqual(len(blocks), 1)
+        statements = blocks[0][2][1]
         calls = [
-            tokens(node) for node in nodes(blocks[0])
+            tokens(node)
+            for statement in statements
+            if statement[0] in ("command", "method_add_arg")
+            for node in nodes(statement)
             if node and node[0] in ("command", "method_add_arg")
         ]
         self.assertIn(["system", "bin", "rustc", "hello.rs", "-o", "hello"], calls)
@@ -110,17 +117,29 @@ class PrebuiltRustTests(unittest.TestCase):
     def test_single_and_double_quoted_compiler_dependencies_are_rejected(self) -> None:
         for quote in ("'", '"'):
             for name in ("rust", "llvm", "rustup", "llvm@23"):
-                with self.subTest(quote=quote, name=name):
-                    mutated = self.formula().replace(
-                        "  depends_on :macos",
-                        f"  depends_on :macos\n  depends_on {quote}{name}{quote}",
-                    )
-                    with self.assertRaisesRegex(AssertionError, "Regex matched"):
-                        self.assert_no_compiler_dependency(mutated)
+                for parentheses in (False, True):
+                    with self.subTest(quote=quote, name=name, parentheses=parentheses):
+                        args = f"{quote}{name}{quote}"
+                        call = f"depends_on({args})" if parentheses else f"depends_on {args}"
+                        mutated = self.formula().replace(
+                            "  depends_on :macos", f"  depends_on :macos\n  {call}",
+                        )
+                        with self.assertRaisesRegex(AssertionError, "Regex matched"):
+                            self.assert_no_compiler_dependency(mutated)
 
     def test_commented_native_compile_or_run_is_rejected(self) -> None:
         for call in ('system bin/"rustc"', 'assert_equal "korvid toolchain'):
             with self.subTest(call=call):
                 mutated = self.formula().replace(f"    {call}", f"    # {call}")
+                with self.assertRaisesRegex(AssertionError, "not found"):
+                    self.assert_native_smoke_calls(mutated)
+
+    def test_conditional_native_compile_or_run_is_rejected(self) -> None:
+        for line in (
+            '    system bin/"rustc", "hello.rs", "-o", "hello"',
+            '    assert_equal "korvid toolchain\\n", shell_output("./hello")',
+        ):
+            with self.subTest(line=line):
+                mutated = self.formula().replace(line, f"    if false\n{line}\n    end")
                 with self.assertRaisesRegex(AssertionError, "not found"):
                     self.assert_native_smoke_calls(mutated)
