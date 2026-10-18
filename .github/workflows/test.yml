@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      runtime_cache_only:
+        description: Prime or verify the Intel runtime cache without rebuilding korvid
+        type: boolean
+        default: false
   # A formula can break without anyone touching it: a yanked sdist or a
   # withdrawn upstream release is only visible from an actual build.
   schedule:
@@ -13,7 +18,33 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: test-formula-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  runtime:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.runtime_cache_only }}
+    runs-on: macos-15-intel
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@a657b8b0cd35d0f65cce41fce9b24cf054b49869
+      - name: Restore Homebrew runtime
+        uses: ./.github/actions/cache-homebrew-runtime
+      - name: Verify prepared runtime
+        run: |
+          set -euo pipefail
+          brew bundle check --file=Brewfile
+          installed="$(brew list --formula)"
+          if printf '%s\n' "$installed" | grep -Fxq korvid; then
+            echo "::error::Dependency cache must not contain an installed korvid."
+            exit 1
+          fi
+
   policy-tests:
     runs-on: ubuntu-latest
     steps:
@@ -24,6 +55,7 @@ jobs:
         run: python3 -S -m unittest discover -s tests -q
 
   test:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.runtime_cache_only }}
     strategy:
       fail-fast: false
       matrix:
@@ -37,24 +69,35 @@ jobs:
       - name: Set up Homebrew
         uses: Homebrew/actions/setup-homebrew@a657b8b0cd35d0f65cce41fce9b24cf054b49869  # master
 
+      - name: Restore Homebrew runtime
+        if: ${{ runner.os == 'macOS' && runner.arch == 'X64' }}
+        uses: ./.github/actions/cache-homebrew-runtime
+
+      - name: Prepare Homebrew runtime
+        if: ${{ (runner.os != 'macOS' || runner.arch != 'X64') }}
+        run: |
+          set -euo pipefail
+          brew bundle --file=Brewfile
+
       # brew refuses `audit`/`install` by path; the formula has to be
       # reached through a tap. Tapping this checkout is what a user's
       # `brew tap hellices/korvid` does, so it also tests the tap layout.
       - name: Tap this checkout
         run: |
+          set -euo pipefail
           tap="$(brew --repository)/Library/Taps/hellices/homebrew-korvid"
           mkdir -p "$(dirname "$tap")"
           rm -rf -- "$tap"
           ln -s "$GITHUB_WORKSPACE" "$tap"
           brew tap-info hellices/korvid
+          installed="$(brew list --formula)"
+          if printf '%s\n' "$installed" | grep -Fxq korvid; then
+            echo "::error::Dependency cache must not contain an installed korvid."
+            exit 1
+          fi
 
       - name: Audit
         run: brew audit --strict hellices/korvid/korvid
-
-      - name: Prepare formula Python
-        run: |
-          set -euo pipefail
-          python3 scripts/prepare_formula_python.py hellices/korvid/korvid
 
       - name: Install from source
         run: brew install --build-from-source --verbose hellices/korvid/korvid
@@ -79,6 +122,7 @@ jobs:
         run: korvid --version
 
   test-bottle:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.runtime_cache_only }}
     strategy:
       fail-fast: false
       matrix:
@@ -198,6 +242,30 @@ jobs:
             echo "filename=$bottle_filename" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Restore Homebrew runtime
+        if: ${{ steps.bottle_check.outputs.skip == 'false' && runner.os == 'macOS' && runner.arch == 'X64' }}
+        uses: ./.github/actions/cache-homebrew-runtime
+
+      - name: Prepare Homebrew runtime
+        if: ${{ steps.bottle_check.outputs.skip == 'false' && (runner.os != 'macOS' || runner.arch != 'X64') }}
+        run: |
+          set -euo pipefail
+          brew bundle --file=Brewfile
+
+      - name: Retap current checkout
+        if: steps.bottle_check.outputs.skip == 'false'
+        run: |
+          set -euo pipefail
+          tap="$(brew --repository)/Library/Taps/hellices/homebrew-korvid"
+          mkdir -p "$(dirname "$tap")"
+          rm -rf -- "$tap"
+          ln -s "$GITHUB_WORKSPACE" "$tap"
+          installed="$(brew list --formula)"
+          if printf '%s\n' "$installed" | grep -Fxq korvid; then
+            echo "::error::Dependency cache must not contain an installed korvid."
+            exit 1
+          fi
+
       - name: Remove cached Korvid archive
         if: steps.bottle_check.outputs.skip == 'false'
         run: |
@@ -222,11 +290,13 @@ jobs:
           grep -Fxq "127.0.0.1 files.pythonhosted.org" /etc/hosts
           grep -Fxq "::1 files.pythonhosted.org" /etc/hosts
 
-      - name: Prepare formula Python
+      - name: Check prepared runtime offline
         if: steps.bottle_check.outputs.skip == 'false'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
         run: |
           set -euo pipefail
-          python3 scripts/prepare_formula_python.py hellices/korvid/korvid
+          brew bundle check --file=Brewfile
 
       - name: Install bottle
         if: steps.bottle_check.outputs.skip == 'false'

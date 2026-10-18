@@ -8,10 +8,14 @@ from __future__ import annotations
 
 import ast
 import json
+import os
+import re
 import subprocess
+import tempfile
 import unittest
 from functools import lru_cache
 from pathlib import Path
+from unittest.mock import patch
 
 BOTTLES_WORKFLOW = Path(__file__).parent.parent / ".github" / "workflows" / "bottles.yml"
 TEST_WORKFLOW = Path(__file__).parent.parent / ".github" / "workflows" / "test.yml"
@@ -52,53 +56,298 @@ def load_workflow(path) -> dict:
 
 
 class TestBottlesWorkflow(unittest.TestCase):
-    def _python_bootstrap(self):
-        wf = load_workflow(BOTTLES_WORKFLOW)
-        steps = wf["jobs"]["build"]["steps"]
+    def _runtime_cache(self, workflow, job):
+        steps = load_workflow(workflow)["jobs"][job]["steps"]
         names = [step.get("name") for step in steps]
-        self.assertIn("Prepare formula Python", names)
-        return steps, names, steps[names.index("Prepare formula Python")]["run"]
-
-    def test_formula_python_is_prepared_before_dependency_install(self):
-        _steps, names, run = self._python_bootstrap()
-        self.assertLess(names.index("Audit formula"), names.index("Prepare formula Python"))
-        self.assertLess(
-            names.index("Prepare formula Python"), names.index("Install build dependencies")
-        )
-        self.assertEqual(run.strip().splitlines()[0], "set -euo pipefail")
+        self.assertNotIn("Prepare formula Python", names)
+        self.assertIn("Restore Homebrew runtime", names)
+        cache = steps[names.index("Restore Homebrew runtime")]
         self.assertEqual(
-            run.strip().splitlines(),
-            [
-                "set -euo pipefail",
-                "python3 scripts/prepare_formula_python.py hellices/korvid/korvid",
-            ],
+            cache["uses"],
+            "./.github/actions/cache-homebrew-runtime",
         )
-
-    def test_source_install_uses_shared_python_preparation(self):
-        steps = load_workflow(TEST_WORKFLOW)["jobs"]["test"]["steps"]
-        names = [step.get("name") for step in steps]
-        self.assertIn("Prepare formula Python", names)
-        self.assertLess(names.index("Audit"), names.index("Prepare formula Python"))
-        self.assertLess(names.index("Prepare formula Python"), names.index("Install from source"))
-        self.assertIn(
-            "python3 scripts/prepare_formula_python.py hellices/korvid/korvid",
-            steps[names.index("Prepare formula Python")]["run"],
+        prefix = "steps.bottle_check.outputs.skip == 'false' && " if job == "test-bottle" else ""
+        self.assertEqual(
+            cache["if"], "${{ " + prefix + "runner.os == 'macOS' && runner.arch == 'X64' }}",
         )
+        bundle = steps[names.index("Prepare Homebrew runtime")]
+        self.assertEqual(
+            bundle["if"],
+            "${{ " + prefix + "(runner.os != 'macOS' || runner.arch != 'X64') }}",
+        )
+        self.assertEqual(bundle["run"].strip().splitlines(), [
+            "set -euo pipefail",
+            "brew bundle --file=Brewfile",
+        ])
+        retap = {
+            "build": "Set up Homebrew tap",
+            "test": "Tap this checkout",
+            "test-bottle": "Retap current checkout",
+        }[job]
+        self.assertLess(names.index(bundle["name"]), names.index(retap))
+        return steps, names, cache
 
-    def test_bottle_python_preparation_stays_inside_network_restriction(self):
-        steps = load_workflow(TEST_WORKFLOW)["jobs"]["test-bottle"]["steps"]
-        names = [step.get("name") for step in steps]
-        self.assertIn("Prepare formula Python", names)
-        preparation = steps[names.index("Prepare formula Python")]
-        self.assertEqual(preparation["if"], "steps.bottle_check.outputs.skip == 'false'")
+    def test_runtime_is_cached_before_build_and_current_checkout_is_retapped(self):
+        steps, names, _cache = self._runtime_cache(BOTTLES_WORKFLOW, "build")
         self.assertLess(
-            names.index("Block files.pythonhosted.org"), names.index("Prepare formula Python")
+            names.index("Restore Homebrew runtime"), names.index("Set up Homebrew tap")
         )
-        self.assertLess(names.index("Prepare formula Python"), names.index("Install bottle"))
-        self.assertIn(
-            "python3 scripts/prepare_formula_python.py hellices/korvid/korvid",
-            preparation["run"],
+        self.assertLess(names.index("Set up Homebrew tap"), names.index("Audit formula"))
+        self.assertLess(names.index("Audit formula"), names.index("Install build dependencies"))
+        self.assertNotIn("if", steps[names.index("Install (build-bottle mode)")])
+
+    def test_source_install_uses_dependency_cache_but_still_builds_korvid(self):
+        steps, names, _cache = self._runtime_cache(TEST_WORKFLOW, "test")
+        self.assertLess(names.index("Restore Homebrew runtime"), names.index("Tap this checkout"))
+        self.assertLess(names.index("Tap this checkout"), names.index("Install from source"))
+        install = steps[names.index("Install from source")]
+        self.assertNotIn("if", install)
+        self.assertIn("--build-from-source", install["run"])
+
+    def test_bottle_runtime_is_staged_then_verified_under_network_restriction(self):
+        steps, names, cache = self._runtime_cache(TEST_WORKFLOW, "test-bottle")
+        self.assertIn("steps.bottle_check.outputs.skip == 'false'", cache["if"])
+        self.assertLess(
+            names.index("Restore Homebrew runtime"), names.index("Block files.pythonhosted.org")
         )
+        self.assertLess(
+            names.index("Restore Homebrew runtime"), names.index("Retap current checkout")
+        )
+        self.assertLess(names.index("Retap current checkout"), names.index("Remove cached Korvid archive"))
+        self.assertLess(names.index("Remove cached Korvid archive"), names.index("Install bottle"))
+        self.assertLess(
+            names.index("Block files.pythonhosted.org"), names.index("Check prepared runtime offline")
+        )
+        self.assertLess(names.index("Check prepared runtime offline"), names.index("Install bottle"))
+        offline = steps[names.index("Check prepared runtime offline")]
+        self.assertEqual(offline["run"].strip().splitlines(), [
+            "set -euo pipefail", "brew bundle check --file=Brewfile",
+        ])
+        self.assertEqual(offline["env"]["HOMEBREW_NO_AUTO_UPDATE"], "1")
+
+    def test_cached_application_is_rejected_after_restoring_runtime(self):
+        for workflow, job, retap in (
+            (BOTTLES_WORKFLOW, "build", "Set up Homebrew tap"),
+            (TEST_WORKFLOW, "test", "Tap this checkout"),
+            (TEST_WORKFLOW, "test-bottle", "Retap current checkout"),
+        ):
+            with self.subTest(job=job):
+                steps, names, _cache = self._runtime_cache(workflow, job)
+                run = steps[names.index(retap)]["run"]
+                self.assertEqual(run.strip().splitlines()[0], "set -euo pipefail")
+                self.assertIn('ln -s "$GITHUB_WORKSPACE" "$tap"', run)
+                self.assertIn('installed="$(brew list --formula)"', run)
+                self.assertIn("grep -Fxq korvid", run)
+                self.assertIn("exit 1", run)
+                guard = run[run.index('installed="$(brew list --formula)"'):]
+                for installed, exit_code in (
+                    ("libyaml\npython@3.13\n", 0),
+                    ("korvid-rust\npython@3.13\n", 0),
+                    ("korvid\npython@3.13\n", 1),
+                ):
+                    result = subprocess.run(
+                        ["bash", "-euo", "pipefail", "-c",
+                         'brew() { printf "%s" "$FORMULAE"; }\n' + guard],
+                        env={**os.environ, "FORMULAE": installed},
+                        text=True, capture_output=True, check=False,
+                    )
+                    self.assertEqual(result.returncode, exit_code, result.stdout + result.stderr)
+
+    def test_late_image_runtime_preparation_is_rejected(self):
+        for workflow, job, install in (
+            (BOTTLES_WORKFLOW, "build", "Install (build-bottle mode)"),
+            (TEST_WORKFLOW, "test", "Install from source"),
+            (TEST_WORKFLOW, "test-bottle", "Install bottle"),
+        ):
+            with self.subTest(job=job):
+                wf = load_workflow(workflow)
+                steps = wf["jobs"][job]["steps"]
+                bundle = next(step for step in steps if step.get("name") == "Prepare Homebrew runtime")
+                steps.remove(bundle)
+                index = next(i for i, step in enumerate(steps) if step.get("name") == install)
+                steps.insert(index + 1, bundle)
+                with patch(f"{__name__}.load_workflow", return_value=wf):
+                    with self.assertRaisesRegex(AssertionError, "not less"):
+                        self._runtime_cache(workflow, job)
+
+    def test_only_superseded_pr_tests_are_cancelled(self):
+        wf = load_workflow(TEST_WORKFLOW)
+        self.assertEqual(
+            wf["concurrency"]["group"],
+            "test-formula-${{ github.event.pull_request.number || github.run_id }}",
+        )
+        self.assertEqual(
+            wf["concurrency"]["cancel-in-progress"], "${{ github.event_name == 'pull_request' }}",
+        )
+
+    def test_branch_validation_does_not_queue_behind_release_builds(self):
+        jobs = load_workflow(BOTTLES_WORKFLOW)["jobs"]
+        self.assertEqual(
+            jobs["build"]["concurrency"]["group"],
+            "bottles-${{ github.ref }}-${{ needs.prepare.outputs.release_tag }}-${{ matrix.tag }}",
+        )
+        self.assertFalse(jobs["build"]["concurrency"]["cancel-in-progress"])
+        self.assertEqual(
+            jobs["publish"]["concurrency"]["group"],
+            "bottles-publish-${{ needs.prepare.outputs.release_tag }}",
+        )
+
+    def test_runtime_cache_can_be_verified_without_rebuilding_the_application(self):
+        wf = load_workflow(TEST_WORKFLOW)
+        events = wf.get("on", wf.get("true", {}))
+        option = events["workflow_dispatch"]["inputs"]["runtime_cache_only"]
+        self.assertEqual(option["type"], "boolean")
+        self.assertFalse(option["default"])
+        self.assertEqual(wf["permissions"], {"contents": "read"})
+        job = wf["jobs"]["runtime"]
+        self.assertEqual(
+            job["if"], "${{ github.event_name == 'workflow_dispatch' && inputs.runtime_cache_only }}",
+        )
+        for name in ("test", "test-bottle"):
+            self.assertEqual(
+                wf["jobs"][name]["if"],
+                "${{ github.event_name != 'workflow_dispatch' || !inputs.runtime_cache_only }}",
+            )
+        self.assertEqual(job["runs-on"], "macos-15-intel")
+        self.assertEqual(job["timeout-minutes"], 90)
+        steps = job["steps"]
+        cache = next(step for step in steps if step.get("name") == "Restore Homebrew runtime")
+        self.assertEqual(
+            cache["uses"],
+            "./.github/actions/cache-homebrew-runtime",
+        )
+        action_path = TEST_WORKFLOW.parents[1] / "actions/cache-homebrew-runtime/action.yml"
+        action_steps = load_workflow(action_path)["runs"]["steps"]
+        scripts = "\n".join(step.get("run", "") for step in [*steps, *action_steps])
+        self.assertIn("brew bundle check --file=Brewfile", scripts)
+        self.assertIn("Dependency cache must not contain an installed korvid.", scripts)
+        self.assertNotIn("brew install", scripts)
+        self.assertNotIn("brew reinstall", scripts)
+        self.assertNotIn("brew bottle", scripts)
+
+    def test_runtime_only_rejects_application_reinstallation(self):
+        loader = load_workflow
+        for name in ("korvid", "hellices/korvid/korvid"):
+            with self.subTest(name=name):
+                wf = load_workflow(TEST_WORKFLOW)
+                wf["jobs"]["runtime"]["steps"].append({"run": f"brew reinstall {name}"})
+                with patch(
+                    f"{__name__}.load_workflow",
+                    side_effect=lambda path: wf if path == TEST_WORKFLOW else loader(path),
+                ):
+                    with self.assertRaisesRegex(AssertionError, "unexpectedly found"):
+                        self.test_runtime_cache_can_be_verified_without_rebuilding_the_application()
+
+    def test_runtime_only_rejects_composite_application_installation(self):
+        path = TEST_WORKFLOW.parents[1] / "actions/cache-homebrew-runtime/action.yml"
+        loader = load_workflow
+        for command in ("brew install korvid", "brew reinstall hellices/korvid/korvid"):
+            with self.subTest(command=command):
+                action = load_workflow(path)
+                action["runs"]["steps"].append({"run": command})
+                with patch(
+                    f"{__name__}.load_workflow",
+                    side_effect=lambda target: action if target == path else loader(target),
+                ):
+                    with self.assertRaisesRegex(AssertionError, "unexpectedly found"):
+                        self.test_runtime_cache_can_be_verified_without_rebuilding_the_application()
+
+    def test_cache_is_managed_kegs_and_opt_links_with_strict_restore_failure(self):
+        path = TEST_WORKFLOW.parents[1] / "actions/cache-homebrew-runtime/action.yml"
+        self.assertTrue(path.is_file())
+        steps = load_workflow(path)["runs"]["steps"]
+        ids = {step.get("id"): step for step in steps}
+        self.assertIn("brew --cellar", ids["plan"]["run"])
+        self.assertIn('$(brew --prefix)/opt', ids["plan"]["run"])
+        self.assertIn("brew deps --union --include-build --formula", ids["plan"]["run"])
+        self.assertIn("brew test-bot --only-cleanup-before", ids["plan"]["run"])
+        self.assertIn("hashFiles('Brewfile')", ids["plan"]["run"])
+        key_line = next(
+            line for line in ids["plan"]["run"].splitlines() if line.startswith('echo "key=')
+        )
+        self.assertIn('$versions" >> "$GITHUB_OUTPUT"', key_line)
+        self.assertTrue(ids["lookup"]["with"]["lookup-only"])
+        restore = ids["restore"]
+        self.assertEqual(restore["if"], "steps.lookup.outputs.cache-hit == 'true'")
+        self.assertTrue(restore["with"]["fail-on-cache-miss"])
+        for cache in (ids["lookup"], restore, ids["save"]):
+            self.assertEqual(cache["with"]["key"], "${{ steps.plan.outputs.key }}")
+            self.assertEqual(cache["with"]["path"].strip().splitlines(), [
+                "${{ steps.plan.outputs.cellar }}",
+                "${{ steps.plan.outputs.opt }}",
+            ])
+            self.assertIn("@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", cache["uses"])
+        names = [step.get("name") for step in steps]
+        self.assertLess(names.index("Install declared runtime"), names.index("Save runtime Cellar"))
+        scripts = "\n".join(step.get("run", "") for step in steps)
+        self.assertIn('brew link --overwrite "$formula"', scripts)
+        self.assertNotIn("brew link --overwrite --force", scripts)
+        self.assertIn("brew postinstall", scripts)
+        self.assertLess(
+            scripts.index("Missing restored opt link"),
+            scripts.index("brew postinstall"),
+        )
+        self.assertIn('"$python" -Im venv', scripts)
+        self.assertIn("import pip, ssl, sqlite3, zlib", scripts)
+        self.assertNotIn("chown", scripts)
+
+    def test_cache_key_changes_when_a_transitive_dependency_changes(self):
+        path = TEST_WORKFLOW.parents[1] / "actions/cache-homebrew-runtime/action.yml"
+        steps = load_workflow(path)["runs"]["steps"]
+        script = next(step["run"] for step in steps if step.get("id") == "plan")
+        ruby = re.search(r"brew ruby -e '(.*?)' ", script, re.DOTALL)
+        self.assertIsNotNone(ruby)
+        metadata = {"formulae": [
+            {"name": "python@3.13", "versions": {"stable": "3.13.16"}, "revision": 0},
+            {"name": "sqlite", "versions": {"stable": "3.54.0"}, "revision": 0},
+        ]}
+        with tempfile.TemporaryDirectory() as directory:
+            info = Path(directory) / "info.json"
+            digests = []
+            for revision in (0, 1):
+                metadata["formulae"][1]["revision"] = revision
+                info.write_text(json.dumps(metadata))
+                result = subprocess.run(
+                    ["ruby", "-e", ruby.group(1), str(info)],
+                    text=True, capture_output=True, check=True,
+                )
+                digests.append(result.stdout)
+            self.assertNotEqual(*digests)
+
+    def test_missing_opt_link_blocks_all_postinstall_hooks(self):
+        path = TEST_WORKFLOW.parents[1] / "actions/cache-homebrew-runtime/action.yml"
+        steps = load_workflow(path)["runs"]["steps"]
+        script = next(step["run"] for step in steps if step.get("name") == "Relink restored runtime")
+        brew = """
+brew() {
+  case "$1" in
+    list)
+      [ "$*" = "list --formula" ] || return 2
+      printf 'python@3.13\\nsqlite\\n'
+      ;;
+    --prefix) printf '%s/%s\\n' "$TEST_PREFIX" "$2" ;;
+    link|postinstall) printf 'hook:%s\\n' "$*" ;;
+    *) return 2 ;;
+  esac
+}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            prefix = Path(directory)
+            (prefix / "python@3.13").mkdir()
+            for sqlite_present in (False, True):
+                if sqlite_present:
+                    (prefix / "sqlite").mkdir()
+                result = subprocess.run(
+                    ["bash", "-euo", "pipefail", "-c", brew + script],
+                    env={**os.environ, "TEST_PREFIX": directory},
+                    text=True, capture_output=True, check=False,
+                )
+                self.assertEqual(result.returncode, 0 if sqlite_present else 1)
+                if sqlite_present:
+                    self.assertIn("hook:postinstall sqlite", result.stdout)
+                else:
+                    self.assertIn("Missing restored opt link", result.stdout)
+                    self.assertNotIn("hook:", result.stdout)
 
     def test_dependencies_are_installed_before_build_bottle_mode(self):
         wf = load_workflow(BOTTLES_WORKFLOW)
@@ -132,7 +381,7 @@ class TestBottlesWorkflow(unittest.TestCase):
         self.assertIn("push", events)
         self.assertEqual(events["push"]["branches"], ["main"])
         self.assertIn(".github/workflows/bottles.yml", events["push"]["paths"])
-        self.assertIn("scripts/prepare_formula_python.py", events["push"]["paths"])
+        self.assertIn("Brewfile", events["push"]["paths"])
         self.assertIn("Formula/korvid-rust.rb", events["push"]["paths"])
 
     def test_intel_prebuilt_toolchain_is_tested_before_bottling(self):

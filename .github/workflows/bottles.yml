@@ -8,7 +8,8 @@ on:
       - Formula/korvid.rb
       - Formula/korvid-rust.rb
       - .github/workflows/bottles.yml
-      - scripts/prepare_formula_python.py
+      - Brewfile
+      - .github/actions/cache-homebrew-runtime/action.yml
   workflow_dispatch:
 
 permissions:
@@ -107,7 +108,7 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.should_build == 'true'
     concurrency:
-      group: bottles-${{ needs.prepare.outputs.release_tag }}-${{ matrix.tag }}
+      group: bottles-${{ github.ref }}-${{ needs.prepare.outputs.release_tag }}-${{ matrix.tag }}
       cancel-in-progress: false
     strategy:
       fail-fast: false
@@ -127,6 +128,16 @@ jobs:
       - name: Set up Homebrew
         uses: Homebrew/actions/setup-homebrew@a657b8b0cd35d0f65cce41fce9b24cf054b49869  # master
 
+      - name: Restore Homebrew runtime
+        if: ${{ runner.os == 'macOS' && runner.arch == 'X64' }}
+        uses: ./.github/actions/cache-homebrew-runtime
+
+      - name: Prepare Homebrew runtime
+        if: ${{ (runner.os != 'macOS' || runner.arch != 'X64') }}
+        run: |
+          set -euo pipefail
+          brew bundle --file=Brewfile
+
       - name: Set up Homebrew tap
         run: |
           set -euo pipefail
@@ -134,16 +145,16 @@ jobs:
           mkdir -p "$(dirname "$tap")"
           rm -rf -- "$tap"
           ln -s "$GITHUB_WORKSPACE" "$tap"
+          installed="$(brew list --formula)"
+          if printf '%s\n' "$installed" | grep -Fxq korvid; then
+            echo "::error::Dependency cache must not contain an installed korvid."
+            exit 1
+          fi
 
       - name: Audit formula
         run: |
           set -euo pipefail
           brew audit --strict hellices/korvid/korvid
-
-      - name: Prepare formula Python
-        run: |
-          set -euo pipefail
-          python3 scripts/prepare_formula_python.py hellices/korvid/korvid
 
       - name: Install build dependencies
         run: |

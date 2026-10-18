@@ -177,26 +177,59 @@ from the `uv.lock` the corresponding korvid release was tested against, by
 in the main repository. The release workflow opens the bump here
 automatically; do not edit the formula by hand.
 
-The bottle workflow prepares Homebrew dependencies with a normal install before
-entering build-bottle mode, so missing upstream dependency bottles can be built
-from source without changing versions or bypassing dependency checks.
-It first unlinks `openssl@1.1` when installed on the disposable runner: its
-legacy aliases can block installation of Python's `openssl@3` dependency on
-hosted Intel images. Because `brew unlink` can report zero removals while stale
-aliases remain, the helper also removes `bin/openssl` and `bin/c_rehash` symlinks
-only when they target the same-named file under that prefix's
-`opt/openssl@1.1/bin`. Other links and regular files are preserved.
-It does not uninstall the old formula, and any listing, prefix lookup, or
-unlink failure stops preparation. It then installs and links the formula's
-selected Homebrew Python to replace conflicting Python.org aliases on hosted
-CI images. Overwrite is scoped to that
-interpreter in the disposable CI jobs, not applied to all dependencies.
-The same helper prepares source-install and bottle-install test jobs; bottle
-tests run it after blocking the PyPI file host so the network restriction still
-covers dependency preparation.
+CI uses Homebrew Bundle and the CI-only `Brewfile` for Python, OpenSSL, and libyaml
+preparation. Intel macOS also uses the SHA-pinned official
+`actions/cache` restore/save actions to reuse its expensive runtime build.
+Only Homebrew's managed `Cellar` and `opt` links are archived; the entire `/usr/local` prefix
+would include unrelated, root-owned runner tools and cannot reliably restore.
+ARM macOS and Linux keep their preinstalled Homebrew environment and
+run Bundle directly, avoiding an unnecessary whole-prefix transfer.
+Homebrew Bundle handles installation and link overwrites for Python/OpenSSL;
+there is no separate Python installer or alias-removal script.
+The runtime action uses Homebrew's standard cleanup on the **disposable Intel
+hosted runner** before restoring cached kegs. It then uses `brew link` and
+`brew postinstall` to reconstruct runtime links and configuration, rather than
+caching unrelated runner files or changing their ownership.
+Relinking follows Homebrew's normal keg-only policy; only the explicit Bundle
+settings control Python/OpenSSL link overrides.
+Do not use this cleanup workflow on a workstation
+or a shared/self-hosted runner.
+
+Cache identity includes OS/architecture, the Brewfile, and the available
+full dependency-closure version/revision, bottle rebuild and formula-source hash.
+Only core runtime dependencies and their build prerequisites are installed
+before the cache is saved: neither korvid nor the tap's Rust toolchain is
+cached. An exact-key lookup precedes restoration; a known cache that fails to
+restore is an error, not a silent partial-cache fallback. All managed opt links
+are checked before any postinstall hook (macOS-provided keg-only formulae such as
+SQLite cannot reconstruct those links through `brew link` alone). A Python venv/import
+probe verifies restored runtime usability before saving. The current tap checkout
+is reattached after restoration, and an
+unexpected cached korvid installation fails the job rather than skipping tests.
+Normal dependency checks, source builds, native tests, and both bottle tests
+still run. Bottle tests prepare the runtime first, reject an installed korvid,
+and purge cached korvid downloads. They then block the PyPI file host, check the
+prepared Brewfile dependencies without installing anything, and verify that
+korvid is actually poured from its published bottle. This qualifies the
+application on a prepared runtime, not a cold/offline bootstrap of Python:
+Intel Python source builds can themselves need pip resources from PyPI.
+
+A cold cache still builds unavailable upstream dependency bottles from source;
+a warm cache avoids repeating that preparation, not the korvid source build.
+The **Test formula** workflow has an opt-in manual `runtime_cache_only` mode to
+prime or verify the same Intel cache without rebuilding korvid. Run it on `main`
+to make a cache available to subsequent PRs, or on a validation branch for a
+cold/warm comparison. This mode is not application qualification, never
+publishes artifacts, and has a 90-minute bound. PRs, schedules and ordinary
+dispatches still run all installation tests.
+Only superseded pull-request test runs are cancelled. Main-branch, scheduled,
+manual, and bottle-publication runs are not cancelled by this policy.
+Bottle build concurrency is scoped by branch and architecture, so a validation
+branch does not wait for an unrelated main build. Actual publication retains
+its separate version-scoped lock and the main-only gate.
 Dispatching that workflow on a topic branch builds and tests artifacts only;
 release publication and the bottle metadata PR are restricted to `main`.
-Merging a bottle-workflow fix also triggers delivery.
+Merging a bottle-workflow or Brewfile fix also triggers delivery.
 
 ### Automatic release delivery
 
