@@ -180,7 +180,7 @@ automatically; do not edit the formula by hand.
 CI uses Homebrew Bundle and the CI-only `Brewfile` for Python, OpenSSL, and libyaml
 preparation. Intel macOS also uses the SHA-pinned official
 `actions/cache` restore/save actions to reuse its expensive runtime build.
-Only Homebrew's managed `Cellar` is archived; the entire `/usr/local` prefix
+Only Homebrew's managed `Cellar` and `opt` links are archived; the entire `/usr/local` prefix
 would include unrelated, root-owned runner tools and cannot reliably restore.
 ARM macOS and Linux keep their preinstalled Homebrew environment and
 run Bundle directly, avoiding an unnecessary whole-prefix transfer.
@@ -194,10 +194,13 @@ Do not use this cleanup workflow on a workstation
 or a shared/self-hosted runner.
 
 Cache identity includes OS/architecture, the Brewfile, and the available
-runtime formula version/revision hash. Only core runtime dependencies are installed
+full dependency-closure version/revision, bottle rebuild and formula-source hash.
+Only core runtime dependencies and their build prerequisites are installed
 before the cache is saved: neither korvid nor the tap's Rust toolchain is
 cached. An exact-key lookup precedes restoration; a known cache that fails to
-restore is an error, not a silent partial-cache fallback. A Python venv/import
+restore is an error, not a silent partial-cache fallback. All managed opt links
+are checked before any postinstall hook (macOS-provided keg-only formulae such as
+SQLite cannot reconstruct those links through `brew link` alone). A Python venv/import
 probe verifies restored runtime usability before saving. The current tap checkout
 is reattached after restoration, and an
 unexpected cached korvid installation fails the job rather than skipping tests.

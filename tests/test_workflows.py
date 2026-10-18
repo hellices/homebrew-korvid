@@ -9,7 +9,9 @@ from __future__ import annotations
 import ast
 import json
 import os
+import re
 import subprocess
+import tempfile
 import unittest
 from functools import lru_cache
 from pathlib import Path
@@ -218,14 +220,26 @@ class TestBottlesWorkflow(unittest.TestCase):
         self.assertIn("brew bundle check --file=Brewfile", scripts)
         self.assertIn("Dependency cache must not contain an installed korvid.", scripts)
         self.assertNotIn("brew install", scripts)
+        self.assertNotIn("brew reinstall", scripts)
         self.assertNotIn("brew bottle", scripts)
 
-    def test_cache_is_cellar_only_and_cannot_hide_restore_failure(self):
+    def test_runtime_only_rejects_application_reinstallation(self):
+        for name in ("korvid", "hellices/korvid/korvid"):
+            with self.subTest(name=name):
+                wf = load_workflow(TEST_WORKFLOW)
+                wf["jobs"]["runtime"]["steps"].append({"run": f"brew reinstall {name}"})
+                with patch(f"{__name__}.load_workflow", return_value=wf):
+                    with self.assertRaisesRegex(AssertionError, "unexpectedly found"):
+                        self.test_runtime_cache_can_be_verified_without_rebuilding_the_application()
+
+    def test_cache_is_managed_kegs_and_opt_links_with_strict_restore_failure(self):
         path = TEST_WORKFLOW.parents[1] / "actions/cache-homebrew-runtime/action.yml"
         self.assertTrue(path.is_file())
         steps = load_workflow(path)["runs"]["steps"]
         ids = {step.get("id"): step for step in steps}
         self.assertIn("brew --cellar", ids["plan"]["run"])
+        self.assertIn('$(brew --prefix)/opt', ids["plan"]["run"])
+        self.assertIn("brew deps --union --include-build --formula", ids["plan"]["run"])
         self.assertIn("brew test-bot --only-cleanup-before", ids["plan"]["run"])
         self.assertIn("hashFiles('Brewfile')", ids["plan"]["run"])
         self.assertTrue(ids["lookup"]["with"]["lookup-only"])
@@ -233,16 +247,78 @@ class TestBottlesWorkflow(unittest.TestCase):
         self.assertEqual(restore["if"], "steps.lookup.outputs.cache-hit == 'true'")
         self.assertTrue(restore["with"]["fail-on-cache-miss"])
         for cache in (ids["lookup"], restore, ids["save"]):
-            self.assertEqual(cache["with"]["path"], "${{ steps.plan.outputs.cellar }}")
+            self.assertEqual(cache["with"]["path"].strip().splitlines(), [
+                "${{ steps.plan.outputs.cellar }}",
+                "${{ steps.plan.outputs.opt }}",
+            ])
             self.assertIn("@55cc8345863c7cc4c66a329aec7e433d2d1c52a9", cache["uses"])
         names = [step.get("name") for step in steps]
         self.assertLess(names.index("Install declared runtime"), names.index("Save runtime Cellar"))
         scripts = "\n".join(step.get("run", "") for step in steps)
         self.assertIn("brew link --overwrite --force", scripts)
         self.assertIn("brew postinstall", scripts)
+        self.assertLess(
+            scripts.index("Missing restored opt link"),
+            scripts.index("brew postinstall"),
+        )
         self.assertIn('"$python" -Im venv', scripts)
         self.assertIn("import pip, ssl, sqlite3, zlib", scripts)
         self.assertNotIn("chown", scripts)
+
+    def test_cache_key_changes_when_a_transitive_dependency_changes(self):
+        path = TEST_WORKFLOW.parents[1] / "actions/cache-homebrew-runtime/action.yml"
+        steps = load_workflow(path)["runs"]["steps"]
+        script = next(step["run"] for step in steps if step.get("id") == "plan")
+        ruby = re.search(r"brew ruby -e '(.*?)' ", script, re.DOTALL)
+        self.assertIsNotNone(ruby)
+        metadata = {"formulae": [
+            {"name": "python@3.13", "versions": {"stable": "3.13.16"}, "revision": 0},
+            {"name": "sqlite", "versions": {"stable": "3.54.0"}, "revision": 0},
+        ]}
+        with tempfile.TemporaryDirectory() as directory:
+            info = Path(directory) / "info.json"
+            digests = []
+            for revision in (0, 1):
+                metadata["formulae"][1]["revision"] = revision
+                info.write_text(json.dumps(metadata))
+                result = subprocess.run(
+                    ["ruby", "-e", ruby.group(1), str(info)],
+                    text=True, capture_output=True, check=True,
+                )
+                digests.append(result.stdout)
+            self.assertNotEqual(*digests)
+
+    def test_missing_opt_link_blocks_all_postinstall_hooks(self):
+        path = TEST_WORKFLOW.parents[1] / "actions/cache-homebrew-runtime/action.yml"
+        steps = load_workflow(path)["runs"]["steps"]
+        script = next(step["run"] for step in steps if step.get("name") == "Relink restored runtime")
+        brew = """
+brew() {
+  case "$1" in
+    list) printf 'python@3.13\\nsqlite\\n' ;;
+    --prefix) printf '%s/%s\\n' "$TEST_PREFIX" "$2" ;;
+    link|postinstall) printf 'hook:%s\\n' "$*" ;;
+    *) return 2 ;;
+  esac
+}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            prefix = Path(directory)
+            (prefix / "python@3.13").mkdir()
+            for sqlite_present in (False, True):
+                if sqlite_present:
+                    (prefix / "sqlite").mkdir()
+                result = subprocess.run(
+                    ["bash", "-euo", "pipefail", "-c", brew + script],
+                    env={**os.environ, "TEST_PREFIX": directory},
+                    text=True, capture_output=True, check=False,
+                )
+                self.assertEqual(result.returncode, 0 if sqlite_present else 1)
+                if sqlite_present:
+                    self.assertIn("hook:postinstall sqlite", result.stdout)
+                else:
+                    self.assertIn("Missing restored opt link", result.stdout)
+                    self.assertNotIn("hook:", result.stdout)
 
     def test_dependencies_are_installed_before_build_bottle_mode(self):
         wf = load_workflow(BOTTLES_WORKFLOW)

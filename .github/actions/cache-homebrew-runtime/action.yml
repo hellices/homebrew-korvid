@@ -1,5 +1,5 @@
 name: Cache managed Homebrew runtime
-description: Cache only runtime kegs, using official cache actions and Homebrew link/postinstall
+description: Cache managed runtime kegs and opt links using official cache actions
 runs:
   using: composite
   steps:
@@ -11,25 +11,53 @@ runs:
       run: |
         set -euo pipefail
         HOMEBREW_DEVELOPER=1 brew test-bot --only-cleanup-before
-        if [ -n "$(brew list --formula)" ]; then
+        installed="$(brew list --formula)"
+        if [ -n "$installed" ]; then
           echo "::error::Homebrew runtime cache requires a clean formula inventory."
           exit 1
         fi
         cellar="$(brew --cellar)"
+        opt="$(brew --prefix)/opt"
         if [[ "$cellar" != /*/Cellar ]]; then
           echo "::error::Unexpected Homebrew Cellar path."
           exit 1
         fi
-        versions="$(brew info --json=v2 openssl@3 python@3.13 libyaml |
-          brew ruby -e 'require "json"; require "digest"; rows = JSON.parse(STDIN.read).fetch("formulae").map { |f| [f.fetch("name"), f.fetch("versions").fetch("stable"), f.fetch("revision")] }.sort; raise "Expected three runtime formulae" unless rows.length == 3; print Digest::SHA256.hexdigest(JSON.generate(rows))')"
+        roots="$(brew bundle list --brews --file=Brewfile)"
+        if [ -z "$roots" ]; then
+          echo "::error::Runtime Brewfile must declare formulae."
+          exit 1
+        fi
+        formulae=()
+        while IFS= read -r formula; do
+          formulae+=("$formula")
+        done <<< "$roots"
+        dependencies="$(brew deps --union --include-build --formula "${formulae[@]}")"
+        while IFS= read -r formula; do
+          if [ -n "$formula" ]; then formulae+=("$formula"); fi
+        done <<< "$dependencies"
+        brew info --json=v2 "${formulae[@]}" > "$RUNNER_TEMP/runtime-formulae.json"
+        versions="$(brew ruby -e '
+          require "json"
+          require "digest"
+          formulae = JSON.parse(File.read(ARGV.fetch(0))).fetch("formulae")
+          rows = formulae.uniq { |f| f.fetch("name") }.map do |f|
+            [f.fetch("name"), f.fetch("versions").fetch("stable"), f.fetch("revision"),
+             f.dig("bottle", "stable", "rebuild"), f["ruby_source_checksum"]]
+          end.sort_by(&:first)
+          raise "Empty runtime metadata" if rows.empty?
+          print Digest::SHA256.hexdigest(JSON.generate(rows))
+        ' "$RUNNER_TEMP/runtime-formulae.json")"
         echo "cellar=$cellar" >> "$GITHUB_OUTPUT"
-        echo "key=homebrew-cellar-v1-$(sw_vers -productVersion)-$(uname -m)-${{ hashFiles('Brewfile') }}-$versions" >> "$GITHUB_OUTPUT"
+        echo "opt=$opt" >> "$GITHUB_OUTPUT"
+        echo "key=homebrew-runtime-v2-$(sw_vers -productVersion)-$(uname -m)-${{ hashFiles('Brewfile') }}-$versions" >> "$GITHUB_OUTPUT"
 
     - name: Look up runtime Cellar
       id: lookup
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: ${{ steps.plan.outputs.cellar }}
+        path: |
+          ${{ steps.plan.outputs.cellar }}
+          ${{ steps.plan.outputs.opt }}
         key: ${{ steps.plan.outputs.key }}
         lookup-only: true
 
@@ -38,7 +66,9 @@ runs:
       if: steps.lookup.outputs.cache-hit == 'true'
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: ${{ steps.plan.outputs.cellar }}
+        path: |
+          ${{ steps.plan.outputs.cellar }}
+          ${{ steps.plan.outputs.opt }}
         key: ${{ steps.plan.outputs.key }}
         fail-on-cache-miss: true
 
@@ -54,6 +84,12 @@ runs:
           echo "::error::Invalid restored runtime formula inventory."
           exit 1
         fi
+        while IFS= read -r formula; do
+          if [ ! -d "$(brew --prefix "$formula")" ]; then
+            echo "::error::Missing restored opt link for $formula."
+            exit 1
+          fi
+        done <<< "$installed"
         while IFS= read -r formula; do
           brew link --overwrite --force "$formula"
           brew postinstall "$formula"
@@ -76,5 +112,7 @@ runs:
       if: steps.lookup.outputs.cache-hit != 'true'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: ${{ steps.plan.outputs.cellar }}
+        path: |
+          ${{ steps.plan.outputs.cellar }}
+          ${{ steps.plan.outputs.opt }}
         key: ${{ steps.plan.outputs.key }}
