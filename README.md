@@ -177,26 +177,30 @@ from the `uv.lock` the corresponding korvid release was tested against, by
 in the main repository. The release workflow opens the bump here
 automatically; do not edit the formula by hand.
 
-The bottle workflow prepares Homebrew dependencies with a normal install before
-entering build-bottle mode, so missing upstream dependency bottles can be built
-from source without changing versions or bypassing dependency checks.
-It first unlinks `openssl@1.1` when installed on the disposable runner: its
-legacy aliases can block installation of Python's `openssl@3` dependency on
-hosted Intel images. Because `brew unlink` can report zero removals while stale
-aliases remain, the helper also removes `bin/openssl` and `bin/c_rehash` symlinks
-only when they target the same-named file under that prefix's
-`opt/openssl@1.1/bin`. Other links and regular files are preserved.
-It does not uninstall the old formula, and any listing, prefix lookup, or
-unlink failure stops preparation. It then installs and links the formula's
-selected Homebrew Python to replace conflicting Python.org aliases on hosted
-CI images. Overwrite is scoped to that
-interpreter in the disposable CI jobs, not applied to all dependencies.
-The same helper prepares source-install and bottle-install test jobs; bottle
-tests run it after blocking the PyPI file host so the network restriction still
-covers dependency preparation.
+CI uses the SHA-pinned official `Homebrew/actions/cache-homebrew-prefix` action
+and the CI-only `Brewfile` for Python, OpenSSL, and libyaml preparation.
+Homebrew Bundle handles installation and link overwrites for Python/OpenSSL;
+there is no separate Python installer or alias-removal script.
+The action cleans existing formulae on the **disposable hosted runner** before
+restoring its prefix cache. Do not use this cleanup workflow on a workstation
+or a shared/self-hosted runner.
+
+Cache identity includes OS/architecture, the Brewfile, and the action's available
+formula version/revision hash. Only core runtime dependencies are installed
+before the cache is saved: neither korvid nor the tap's Rust toolchain is
+cached. The current tap checkout is reattached after restoration, and an
+unexpected cached korvid installation fails the job rather than skipping tests.
+Normal dependency checks, source builds, native tests, and both bottle tests
+still run. Restricted-network bottle tests restore dependencies after blocking
+the PyPI file host, then purge any cached korvid download before installation.
+
+A cold cache still builds unavailable upstream dependency bottles from source;
+a warm cache avoids repeating that preparation, not the korvid source build.
+Only superseded pull-request test runs are cancelled. Main-branch, scheduled,
+manual, and bottle-publication runs are not cancelled by this policy.
 Dispatching that workflow on a topic branch builds and tests artifacts only;
 release publication and the bottle metadata PR are restricted to `main`.
-Merging a bottle-workflow fix also triggers delivery.
+Merging a bottle-workflow or Brewfile fix also triggers delivery.
 
 ### Automatic release delivery
 
