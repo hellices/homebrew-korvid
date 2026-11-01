@@ -9,15 +9,9 @@ class Korvid < Formula
 
   desc "AI-native Kubernetes TUI"
   homepage "https://github.com/hellices/korvid"
-  url "https://files.pythonhosted.org/packages/8d/ea/c8c4e6f63aabdf55a1130af32123dde4f45f66bf1b3368111e781a2249b7/korvid-0.7.0.tar.gz"
-  sha256 "c6886cd0ac844100c3bf2555ce81e415caec9627cbc31187e7d9924f5d03f665"
+  url "https://files.pythonhosted.org/packages/eb/c6/99f39e046ec64b5022b08fc27bf5eea06b0344e686d47b5ed4dc44d852fe/korvid-0.7.1.tar.gz"
+  sha256 "10e7be28b978db485a01c016b0bb38ea2209103f4c3960f20962fa1e2021d4e9"
   license "Apache-2.0"
-
-  bottle do
-    root_url "https://github.com/hellices/homebrew-korvid/releases/download/korvid-0.7.0"
-    sha256 cellar: :any, arm64_sequoia: "b675606915426ca997a91e1c9806349d14af95c71414af0cb200b36a74182fcb"
-    sha256 cellar: :any, sequoia:       "867d67742ad0b4bb2c233a427939230970434eb49a836456f7e7c3725a1714af"
-  end
 
   depends_on "libyaml"
   depends_on "openssl@3"
@@ -425,7 +419,7 @@ class Korvid < Formula
   end
 
   test do
-    assert_match "0.7.0", shell_output("#{bin}/korvid --version")
+    assert_match "0.7.1", shell_output("#{bin}/korvid --version")
     # Use bundled model metadata during the import smoke test.
     ENV["LITELLM_LOCAL_MODEL_COST_MAP"] = "true"
     system libexec/"bin/python", "-I", "-c",
