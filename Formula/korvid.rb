@@ -9,15 +9,9 @@ class Korvid < Formula
 
   desc "AI-native Kubernetes TUI"
   homepage "https://github.com/hellices/korvid"
-  url "https://files.pythonhosted.org/packages/75/d8/f85118e60da8d67b122cffe460390244ac78531bf7d69a3d882b26328929/korvid-0.6.0.tar.gz"
-  sha256 "fd91e5dc6035e52303fe9a882d59be7f6c8a0a934fbc40fe199a1688d4435c34"
+  url "https://files.pythonhosted.org/packages/8d/ea/c8c4e6f63aabdf55a1130af32123dde4f45f66bf1b3368111e781a2249b7/korvid-0.7.0.tar.gz"
+  sha256 "c6886cd0ac844100c3bf2555ce81e415caec9627cbc31187e7d9924f5d03f665"
   license "Apache-2.0"
-
-  bottle do
-    root_url "https://github.com/hellices/homebrew-korvid/releases/download/korvid-0.6.0"
-    sha256 cellar: :any, arm64_sequoia: "4a306eb9d5d30cff487c5d6818d5d97897d890c1c11f1c817382b90dcfc2c5ad"
-    sha256 cellar: :any, sequoia:       "7c0ee1413e86f6b2aeb92f851474d722c739b0c0b2593ae11955103a6b81e046"
-  end
 
   depends_on "libyaml"
   depends_on "openssl@3"
@@ -42,8 +36,8 @@ class Korvid < Formula
   end
 
   resource "aiohttp" do
-    url "https://files.pythonhosted.org/packages/58/d9/22ce5786ac0c1653ae8b6c23bded02c1686d11f0dbb45b31ce128e0df985/aiohttp-3.14.3.tar.gz"
-    sha256 "9491196535a88924a60afd5b5f434b5b203b6cc616250878dbdb223a8f7844bc"
+    url "https://files.pythonhosted.org/packages/93/2f/6a91adaa2dc26877d6ed2f54c0370c8910f019db7d77c5c6a194611e93ea/aiohttp-3.14.4.tar.gz"
+    sha256 "831fc5bd39ec2517851e348f613ddb5447a47cf4b71cb09845af7ad7ed45d8f9"
   end
 
   resource "aiosignal" do
@@ -82,8 +76,8 @@ class Korvid < Formula
   end
 
   resource "certifi" do
-    url "https://files.pythonhosted.org/packages/a3/c2/24167ea9858356b47a87a50d39908bfdb72ceeefe0041586e704e5376b3a/certifi-2026.7.22.tar.gz"
-    sha256 "741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55"
+    url "https://files.pythonhosted.org/packages/a6/bd/1436c50cc46699de0230fbaacc1d1de7bfec413176099949e9d5112e88f2/certifi-2026.10.19.tar.gz"
+    sha256 "035c1e85572b141bf1c3a3eff0e33a8eb74917522f2559075ff8d2fea780a1ae"
   end
 
   resource "cffi" do
@@ -117,8 +111,8 @@ class Korvid < Formula
   end
 
   resource "filelock" do
-    url "https://files.pythonhosted.org/packages/c0/80/8232b582c4b318b817cf1274ba74976b07b34d35ef439b3eb948f98645a1/filelock-3.32.0.tar.gz"
-    sha256 "7be2ad23a14607ccc71808e68fe30848aeace7058ace17852f68e2a68e310402"
+    url "https://files.pythonhosted.org/packages/d8/28/3893324bcadf8f89b1616637468d766af3f625008c0735bf704fdfa86617/filelock-4.2.4.tar.gz"
+    sha256 "c6d8663535e1650ee430507b4ffbac7b464dd64b7647ea0112a9f406499d163d"
   end
 
   resource "frozenlist" do
@@ -227,8 +221,8 @@ class Korvid < Formula
   end
 
   resource "litellm" do
-    url "https://files.pythonhosted.org/packages/9f/c7/ee8afd6fa316c24bd328f1c3ed6aaaac87ef425b3540a68c10c9eefcee4f/litellm-1.100.3.tar.gz"
-    sha256 "22bb00fc82e5197df7484b81a1e70c8a71452993b4ad0d903ee29780f2b36630"
+    url "https://files.pythonhosted.org/packages/71/63/28fb5696e52f40f4bafd096a3d0ed2c8679a24311ed89c200a280ee3b68a/litellm-1.100.4.tar.gz"
+    sha256 "c031cbc63848be16403725594f6060fe002dc2e65f0866878285d72923ac27ab"
   end
 
   resource "markdown-it-py" do
@@ -267,8 +261,8 @@ class Korvid < Formula
   end
 
   resource "packaging" do
-    url "https://files.pythonhosted.org/packages/d7/f1/e7a6dd94a8d4a5626c03e4e99c87f241ba9e350cd9e6d75123f992427270/packaging-26.2.tar.gz"
-    sha256 "ff452ff5a3e828ce110190feff1178bb1f2ea2281fa2075aadb987c2fb221661"
+    url "https://files.pythonhosted.org/packages/7d/fa/3944b40b07da9ce895c0e6303a5ab7d53da063554f534556b134a54d6093/packaging-26.3.tar.gz"
+    sha256 "94edc256424af38762eb31306eed28beb9f0efc50a8837492c9d6fd6004aed79"
   end
 
   resource "platformdirs" do
@@ -407,8 +401,8 @@ class Korvid < Formula
   end
 
   resource "yarl" do
-    url "https://files.pythonhosted.org/packages/31/33/ebe9e3d1f86c7a0b51094c0a146392045ca1631d2664889539dec8088a33/yarl-1.24.5.tar.gz"
-    sha256 "e81b83143bee16329c23db3c1b2d82b29892fcbcb849186d2f6e98a5abe9a57f"
+    url "https://files.pythonhosted.org/packages/75/16/e8be8e2fb175bbf41a0680381a319f1199fae256588241a2ac8677eafb49/yarl-1.25.1.tar.gz"
+    sha256 "03dd38de09bc213e9a8b29761eec33ee1d5318dac0e49d8af36e4d27830e23a7"
   end
 
   resource "zipp" do
@@ -425,7 +419,7 @@ class Korvid < Formula
   end
 
   test do
-    assert_match "0.6.0", shell_output("#{bin}/korvid --version")
+    assert_match "0.7.0", shell_output("#{bin}/korvid --version")
     # Use bundled model metadata during the import smoke test.
     ENV["LITELLM_LOCAL_MODEL_COST_MAP"] = "true"
     system libexec/"bin/python", "-I", "-c",
