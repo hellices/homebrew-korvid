@@ -13,6 +13,12 @@ class Korvid < Formula
   sha256 "10e7be28b978db485a01c016b0bb38ea2209103f4c3960f20962fa1e2021d4e9"
   license "Apache-2.0"
 
+  bottle do
+    root_url "https://github.com/hellices/homebrew-korvid/releases/download/korvid-0.7.1"
+    sha256 cellar: :any, arm64_sequoia: "f0cebffea242b5a8cd5baeb524f4a1215a70612c7dc0b2b25c0b536fc3edf445"
+    sha256 cellar: :any, sequoia:       "fa146b976bb49f4e07b3b4489d751e2258410b75c15e95329fe246dd5c11f40f"
+  end
+
   depends_on "libyaml"
   depends_on "openssl@3"
   depends_on "python@3.13"
